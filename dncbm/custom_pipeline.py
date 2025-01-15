@@ -9,7 +9,7 @@ from torch import Tensor
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 import wandb
-from sparse_autoencoder.metrics.abstract_metric import MetricLocation, MetricResult
+from sparse_autoencoder.metrics.abstract_metric import ComponentAggregationApproach, MetricLocation, MetricResult
 
 
 from sparse_autoencoder.activation_resampler.abstract_activation_resampler import (
@@ -405,3 +405,119 @@ class Pipeline:
 
         # Save the final checkpoint
         self.save_checkpoint(is_final=True)
+
+
+class PipelineWithAlignment(Pipeline):
+    def __init__(self, align_lambda, embd_dictionary, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.align_lambda = align_lambda
+        self.alignment_loss = MahalanobisAlignmentLoss(embd_dictionary)
+
+    @validate_call(config={"arbitrary_types_allowed": True})
+    def train_autoencoder(
+        self, activation_store: TensorActivationStore, train_batch_size: PositiveInt
+    ) -> Int64[Tensor, Axis.names(Axis.COMPONENT, Axis.LEARNT_FEATURE)]:
+        """Train the sparse autoencoder.
+
+        Args:
+            activation_store: Activation store from the generate section.
+            train_batch_size: Train batch size.
+
+        Returns:
+            Number of times each neuron fired, for each component.
+        """
+
+        activations_dataloader = DataLoader(
+            activation_store,
+            batch_size=train_batch_size,
+            shuffle=True
+        )
+
+        learned_activations_fired_count: Int64[
+            Tensor, Axis.names(Axis.COMPONENT, Axis.LEARNT_FEATURE)
+        ] = torch.zeros(
+            (self.n_components, self.autoencoder.n_learned_features),
+            dtype=torch.int64,
+            device=self.device,)
+
+        for id, store_batch in enumerate(activations_dataloader):
+            # Zero the gradients
+            self.optimizer.zero_grad()
+
+            # Move the batch to the device (in place)
+            batch = store_batch.detach().to(self.device)
+
+            # Forward pass
+            learned_activations, reconstructed_activations = self.autoencoder.forward(
+                batch)
+
+            # Get loss & metrics
+            metrics: list[MetricResult] = []
+            total_loss, loss_metrics = self.loss.scalar_loss_with_log(
+                batch,
+                learned_activations,
+                reconstructed_activations,
+                component_reduction=LossReductionType.MEAN
+            )
+            metrics.extend(loss_metrics)
+
+            with torch.no_grad():
+                for metric in self.metrics.train_metrics:
+                    calculated = metric.calculate(
+                        TrainMetricData(batch, learned_activations,
+                                        reconstructed_activations)
+                    )
+                    metrics.extend(calculated)
+
+            # Store count of how many neurons have fired
+            with torch.no_grad():
+                fired = learned_activations > 0
+                learned_activations_fired_count.add_(fired.sum(dim=0))
+            # Calculate alignment loss
+            weight_mat = self.autoencoder.encoder.weight.squeeze(0)
+            alignment_loss = self.alignment_loss.forward(weight_mat)
+            total_loss += self.align_lambda * alignment_loss
+            
+            # Log alignment loss metric
+            metrics.append(MetricResult(
+                component_wise_values=[alignment_loss.item()],
+                name="alignment_loss",
+                location=MetricLocation.TRAIN,
+                aggregate_approach=ComponentAggregationApproach.MEAN
+            ))
+
+
+            # Backwards pass
+            total_loss.backward()
+            self.optimizer.step()
+            self.autoencoder.post_backwards_hook()
+
+            # Log training metrics
+            self.total_activations_trained_on += train_batch_size
+            if (
+                wandb.run is not None
+                and int(self.total_activations_trained_on / train_batch_size) % self.log_frequency
+                == 0
+            ):
+                log = {}
+                for metric_result in metrics:
+                    log.update(metric_result.wandb_log)
+                wandb.log(
+                    log,
+                    step=self.total_activations_trained_on,
+                    commit=False,
+                )
+        return learned_activations_fired_count
+
+
+class MahalanobisAlignmentLoss():
+    def __init__(self, embd_dictionary):
+        self.embd_dictionary = embd_dictionary
+        self.sigma_inv = torch.inverse(torch.cov(embd_dictionary.T))
+        self.mu = torch.mean(embd_dictionary, dim=0)
+
+    def forward(self, weights):
+        weights = weights / weights.norm(dim=1, keepdim=True)
+        weights = weights - self.mu.unsqueeze(0)
+        print(f"sigma_inv norm: {self.sigma_inv.norm(p=2)}")
+        return torch.diag(weights @ self.sigma_inv @ weights.T).mean()

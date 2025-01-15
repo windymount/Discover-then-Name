@@ -64,5 +64,6 @@ def get_common_parser():
     parser.add_argument("--probe_eval_coverage_freq", type=int, default=1)
     parser.add_argument("--use_wandb", action="store_true", default=False)
     parser.add_argument("--wandb_entity", type=str, default="dncbm")
-
+    parser.add_argument('--alignment_lam', type=float, default=0.0,
+                        help='Lambda coefficient for alignment loss. Set > 0 to enable alignment training.')
     return parser
