@@ -513,11 +513,10 @@ class PipelineWithAlignment(Pipeline):
 class MahalanobisAlignmentLoss():
     def __init__(self, embd_dictionary):
         self.embd_dictionary = embd_dictionary
-        self.sigma_inv = torch.inverse(torch.cov(embd_dictionary.T))
+        self.sigma_inv = torch.inverse(torch.cov(embd_dictionary.T) + 1e-6 * torch.eye(embd_dictionary.shape[1]).to(embd_dictionary.device))
         self.mu = torch.mean(embd_dictionary, dim=0)
 
     def forward(self, weights):
         weights = weights / weights.norm(dim=1, keepdim=True)
         weights = weights - self.mu.unsqueeze(0)
-        print(f"sigma_inv norm: {self.sigma_inv.norm(p=2)}")
         return torch.diag(weights @ self.sigma_inv @ weights.T).mean()

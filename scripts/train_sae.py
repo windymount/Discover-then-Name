@@ -1,4 +1,4 @@
-from dncbm.custom_pipeline import Pipeline
+from dncbm.custom_pipeline import Pipeline, PipelineWithAlignment
 import os
 from pathlib import Path
 
@@ -26,10 +26,6 @@ parser = get_common_parser()
 args = parser.parse_args()
 common_init(args)
 start_time = time()
-
-
-embeddings_path = f"/BS/language-explanations/work/concept_naming/embeddings_{args.img_enc_name_for_saving}_clipdissect_20k.pth"
-args.vocab_specific_embedding = torch.load(embeddings_path).to(args.device)
 
 
 autoencoder_input_dim: int = args.autoencoder_input_dim_dict[
@@ -87,8 +83,7 @@ if args.use_wandb:
         project=wandb_project_name,
         dir=wandb_dir,
         name=args.config_name,
-        config=args,
-        entity="text_concept_explanations",)
+        config=args,)
 
     wandb.define_metric("custom_steps")
     wandb.define_metric("train/loss_instability_across_batches",
@@ -97,17 +92,38 @@ if args.use_wandb:
     print(f"Wandb initialized at {time() - start_time} seconds")
 
 
-pipeline = Pipeline(
-    activation_resampler=activation_resampler,
-    autoencoder=autoencoder,
-    checkpoint_directory=Path(
-        f"{args.save_dir_sae_ckpts[args.modality]}{args.save_suffix}"),
-    loss=loss,
-    optimizer=optimizer,
-    device=args.device,
-    args=args,
-)
-print(f"Pipeline created at {time() - start_time} seconds")
+if args.alignment_lam > 0.0:
+    # Load embeddings dictionary for alignment
+    embeddings_path = os.path.join(args.vocab_dir, 
+                                 f"embeddings_{args.img_enc_name_for_saving}_clipdissect_20k.pth")
+    embd_dictionary = torch.load(embeddings_path).float().cuda()
+    print(f"Loaded embeddings dictionary for alignment from {embeddings_path}")
+    
+    pipeline = PipelineWithAlignment(
+        align_lambda=args.alignment_lam,
+        embd_dictionary=embd_dictionary,
+        activation_resampler=activation_resampler,
+        autoencoder=autoencoder,
+        checkpoint_directory=Path(
+            f"{args.save_dir_sae_ckpts[args.modality]}{args.save_suffix}"),
+        loss=loss,
+        optimizer=optimizer,
+        device=args.device,
+        args=args,
+    )
+    print(f"Pipeline with alignment created at {time() - start_time} seconds")
+else:
+    pipeline = Pipeline(
+        activation_resampler=activation_resampler,
+        autoencoder=autoencoder,
+        checkpoint_directory=Path(
+            f"{args.save_dir_sae_ckpts[args.modality]}{args.save_suffix}"),
+        loss=loss,
+        optimizer=optimizer,
+        device=args.device,
+        args=args,
+    )
+    print(f"Standard pipeline created at {time() - start_time} seconds")
 
 fnames = os.listdir(args.data_dir_activations[args.modality])
 print(f"Getting fnames from {args.data_dir_activations[args.modality]}")
