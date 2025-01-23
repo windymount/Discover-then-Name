@@ -19,7 +19,7 @@ class FetchFeatures:
         collator = CustomDataCollatorImg()
         cc3m_obj = CC3MImg()
         dtset = cc3m_obj.get_wds_dataset(shard, clip_preprocess, batch_size, collator=collator)
-        loader = cc3m_obj.get_dataloader(dtset, batch_size=None, shuffle=False)
+        loader = cc3m_obj.get_dataloader(dtset, batch_size=None, shuffle=False, num_workers=8)
 
         return loader
     
