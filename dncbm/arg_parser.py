@@ -66,4 +66,7 @@ def get_common_parser():
     parser.add_argument("--wandb_entity", type=str, default="dncbm")
     parser.add_argument('--alignment_lam', type=float, default=0.0,
                         help='Lambda coefficient for alignment loss. Set > 0 to enable alignment training.')
+    parser.add_argument('--align_loss_type', type=str, default='maha_encoder',
+                        choices=['maha_encoder', 'maha_decoder'],
+                        help='Type of alignment loss to use')
     return parser

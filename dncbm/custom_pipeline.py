@@ -27,10 +27,16 @@ from sparse_autoencoder.metrics.metrics_container import MetricsContainer, defau
 from sparse_autoencoder.metrics.train.abstract_train_metric import TrainMetricData
 from sparse_autoencoder.optimizer.abstract_optimizer import AbstractOptimizerWithReset
 from sparse_autoencoder.tensor_types import Axis
+from enum import Enum
 
 
 if TYPE_CHECKING:
     from sparse_autoencoder.metrics.abstract_metric import MetricResult
+
+
+class AlignmentLossType(Enum):
+    maha_encoder = "mahalanobis_encoder"
+    maha_decoder = "mahalanobis_decoder"
 
 
 class Pipeline:
@@ -408,10 +414,16 @@ class Pipeline:
 
 
 class PipelineWithAlignment(Pipeline):
-    def __init__(self, align_lambda, embd_dictionary, *args, **kwargs):
+    def __init__(self, align_lambda, embd_dictionary, align_loss_type: AlignmentLossType = AlignmentLossType.maha_encoder, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.align_lambda = align_lambda
-        self.alignment_loss = MahalanobisAlignmentLoss(embd_dictionary)
+        # Choose alignment loss based on type
+        if align_loss_type == AlignmentLossType.maha_encoder:
+            self.alignment_loss = MahaLossOnEncoder(embd_dictionary)
+        elif align_loss_type == AlignmentLossType.maha_decoder:
+            self.alignment_loss = MahaLossOnDecoder(embd_dictionary)
+        else:
+            raise ValueError(f"Unknown alignment loss type: {align_loss_type}")
 
     @validate_call(config={"arbitrary_types_allowed": True})
     def train_autoencoder(
@@ -474,8 +486,7 @@ class PipelineWithAlignment(Pipeline):
                 fired = learned_activations > 0
                 learned_activations_fired_count.add_(fired.sum(dim=0))
             # Calculate alignment loss
-            weight_mat = self.autoencoder.encoder.weight.squeeze(0)
-            alignment_loss = self.alignment_loss.forward(weight_mat)
+            alignment_loss = self.alignment_loss.forward(self.autoencoder)
             total_loss += self.align_lambda * alignment_loss
             
             # Log alignment loss metric
@@ -520,3 +531,13 @@ class MahalanobisAlignmentLoss():
         weights = weights / weights.norm(dim=1, keepdim=True)
         weights = weights - self.mu.unsqueeze(0)
         return torch.diag(weights @ self.sigma_inv @ weights.T).mean()
+
+
+class MahaLossOnEncoder(MahalanobisAlignmentLoss):
+    def forward(self, sae):
+        return super().forward(sae.encoder.weight.squeeze(0))
+
+
+class MahaLossOnDecoder(MahalanobisAlignmentLoss):
+    def forward(self, sae):
+        return super().forward(sae.decoder.weight.squeeze(0).T)

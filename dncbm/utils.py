@@ -99,12 +99,17 @@ def common_init(args, disable_make_dirs=False):
     """
     Performs initializations of variables common to several scripts, and creates directories where applicable
     """
-
     set_seed(args.seed)
 
-    args.config_name = f"lr{args.lr}_l1coeff{args.l1_coeff}_ef{args.expansion_factor}_rf{args.resample_freq}_hook{args.hook_points[0]}_bs{args.train_sae_bs}_epo{args.num_epochs}_align{args.alignment_lam}"
-    # CSV-compatible config name
-    args.config_name_csv = f"{args.img_enc_name},{args.hook_points[0]},{args.sae_dataset},{args.lr},{args.l1_coeff},{args.expansion_factor},{args.resample_freq},{args.train_sae_bs},{args.num_epochs}"
+    # Update config_name to include alignment type if alignment is enabled
+    align_suffix = f"_align{args.alignment_lam}"
+    if args.alignment_lam > 0:
+        align_suffix += f"_{args.align_loss_type}"
+        
+    args.config_name = f"lr{args.lr}_l1coeff{args.l1_coeff}_ef{args.expansion_factor}_rf{args.resample_freq}_hook{args.hook_points[0]}_bs{args.train_sae_bs}_epo{args.num_epochs}{align_suffix}"
+    
+    # Update CSV config name to include alignment parameters
+    args.config_name_csv = f"{args.img_enc_name},{args.hook_points[0]},{args.sae_dataset},{args.lr},{args.l1_coeff},{args.expansion_factor},{args.resample_freq},{args.train_sae_bs},{args.num_epochs},{args.alignment_lam},{args.align_loss_type}"
 
     args.img_enc_name_for_saving = args.img_enc_name.replace('/', '')
 
