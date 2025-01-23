@@ -37,6 +37,8 @@ if TYPE_CHECKING:
 class AlignmentLossType(Enum):
     maha_encoder = "mahalanobis_encoder"
     maha_decoder = "mahalanobis_decoder"
+    max_cos_sim_encoder = "max_cos_sim_encoder"
+    max_cos_sim_decoder = "max_cos_sim_decoder"
 
 
 class Pipeline:
@@ -422,6 +424,10 @@ class PipelineWithAlignment(Pipeline):
             self.alignment_loss = MahaLossOnEncoder(embd_dictionary)
         elif align_loss_type == AlignmentLossType.maha_decoder:
             self.alignment_loss = MahaLossOnDecoder(embd_dictionary)
+        elif align_loss_type == AlignmentLossType.max_cos_sim_encoder:
+            self.alignment_loss = MaxCosSimLossOnEncoder(embd_dictionary)
+        elif align_loss_type == AlignmentLossType.max_cos_sim_decoder:
+            self.alignment_loss = MaxCosSimLossOnDecoder(embd_dictionary)
         else:
             raise ValueError(f"Unknown alignment loss type: {align_loss_type}")
 
@@ -539,5 +545,26 @@ class MahaLossOnEncoder(MahalanobisAlignmentLoss):
 
 
 class MahaLossOnDecoder(MahalanobisAlignmentLoss):
+    def forward(self, sae):
+        return super().forward(sae.decoder.weight.squeeze(0).T)
+
+
+class MaxCosSimLoss():
+    def __init__(self, embd_dictionary):
+        self.embd_dictionary = embd_dictionary
+        self.embd_dictionary = self.embd_dictionary / self.embd_dictionary.norm(dim=1, keepdim=True)
+
+    def forward(self, weights):
+        weights = weights / weights.norm(dim=1, keepdim=True)
+        cos_sim = torch.matmul(weights, self.embd_dictionary.T)
+        return -cos_sim.max(dim=1).values.mean()
+
+
+class MaxCosSimLossOnEncoder(MaxCosSimLoss):
+    def forward(self, sae):
+        return super().forward(sae.encoder.weight.squeeze(0))
+
+
+class MaxCosSimLossOnDecoder(MaxCosSimLoss):
     def forward(self, sae):
         return super().forward(sae.decoder.weight.squeeze(0).T)

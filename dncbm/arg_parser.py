@@ -67,6 +67,6 @@ def get_common_parser():
     parser.add_argument('--alignment_lam', type=float, default=0.0,
                         help='Lambda coefficient for alignment loss. Set > 0 to enable alignment training.')
     parser.add_argument('--align_loss_type', type=str, default='maha_encoder',
-                        choices=['maha_encoder', 'maha_decoder'],
+                        choices=['maha_encoder', 'maha_decoder', 'max_cos_sim_encoder', 'max_cos_sim_decoder'],
                         help='Type of alignment loss to use')
     return parser
