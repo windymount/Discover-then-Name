@@ -1,4 +1,4 @@
-from dncbm.custom_pipeline import Pipeline, PipelineWithAlignment
+from dncbm.custom_pipeline import AlignmentLossType, Pipeline, PipelineWithAlignment
 import os
 from pathlib import Path
 
@@ -101,6 +101,7 @@ if args.alignment_lam > 0.0:
     
     pipeline = PipelineWithAlignment(
         align_lambda=args.alignment_lam,
+        align_loss_type=AlignmentLossType[args.align_loss_type],
         embd_dictionary=embd_dictionary,
         activation_resampler=activation_resampler,
         autoencoder=autoencoder,
