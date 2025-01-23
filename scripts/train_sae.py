@@ -71,8 +71,8 @@ print(f"Activation resampler created at {time() - start_time} seconds")
 
 if args.use_wandb:
     print("wandb started!")
-
-    wandb_project_name = f"SAEImg_{args.sae_dataset}_{args.img_enc_name_for_saving}_{args.hook_points[0]}_{datetime.datetime.now().strftime('%Y-%m-%d')}{args.save_suffix}"
+    wandb_project_name = "SAECBM"
+    wandb_group_name = f"SAEImg_{args.sae_dataset}_{args.img_enc_name_for_saving}_{args.hook_points[0]}_{args.save_suffix}"
 
     print(f"wandb started! {wandb_project_name}")
 
@@ -81,6 +81,7 @@ if args.use_wandb:
     wandb_path.mkdir(exist_ok=True)
     wandb.init(
         project=wandb_project_name,
+        group=wandb_group_name,
         dir=wandb_dir,
         name=args.config_name,
         config=args,)
