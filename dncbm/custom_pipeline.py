@@ -4,13 +4,14 @@ from urllib.parse import quote_plus
 
 from jaxtyping import Int64
 from pydantic import NonNegativeInt, PositiveInt, validate_call
+from sparse_autoencoder.activation_store.base_store import ActivationStore
 import torch
 from torch import Tensor
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 import wandb
 from sparse_autoencoder.metrics.abstract_metric import ComponentAggregationApproach, MetricLocation, MetricResult
-
+from sparse_autoencoder.activation_resampler.activation_resampler import ActivationResampler
 
 from sparse_autoencoder.activation_resampler.abstract_activation_resampler import (
     AbstractActivationResampler,
@@ -568,3 +569,107 @@ class MaxCosSimLossOnEncoder(MaxCosSimLoss):
 class MaxCosSimLossOnDecoder(MaxCosSimLoss):
     def forward(self, sae):
         return super().forward(sae.decoder.weight.squeeze(0).T)
+
+
+class EmbeddingAlignedResampler(ActivationResampler):
+    """Activation resampler that considers embedding alignment.
+    
+    In addition to standard dead neuron resampling, this resampler also identifies neurons
+    that are redundantly aligned to the same embedding vector and resamples all but the
+    strongest one.
+    """
+    
+    def __init__(
+        self,
+        embd_dictionary: torch.Tensor,
+        cosine_similarity_threshold: float = 0.8,
+        use_encoder: bool = True,
+        *args,
+        **kwargs
+    ) -> None:
+        """Initialize the embedding-aligned resampler.
+        
+        Args:
+            embd_dictionary: Tensor of embedding vectors to align against
+            cosine_similarity_threshold: Threshold above which two neurons are considered to
+                share the same embedding (default: 0.8)
+            *args, **kwargs: Arguments passed to parent ActivationResampler
+        """
+        super().__init__(*args, **kwargs)
+        self.embd_dictionary = embd_dictionary
+        self.cosine_similarity_threshold = cosine_similarity_threshold
+        self.use_encoder = use_encoder
+    def _get_dead_neuron_indices(self) -> list[Int64[Tensor, Axis.names(Axis.LEARNT_FEATURE_IDX)]]:
+        """Get indices of neurons to resample.
+        
+        Combines standard dead neuron detection with detection of redundant embedding alignments.
+        
+        Returns:
+            List of tensors containing indices of neurons to resample for each component
+        """
+        # First get standard dead neurons
+        dead_indices = super()._get_dead_neuron_indices()
+        
+        # For each component, identify and add redundant neurons
+        for component_idx in range(self._n_components):
+            if self.use_encoder:
+                # Get encoder weights for this component and normalize
+                encoder_weights = self.autoencoder.encoder.weight[component_idx]
+                normalized_weights = torch.nn.functional.normalize(encoder_weights, dim=1)
+                normalized_embds = torch.nn.functional.normalize(self.embd_dictionary, dim=1)
+            else:
+                # Get decoder weights for this component and normalize
+                decoder_weights = self.autoencoder.decoder.weight[component_idx]
+                normalized_weights = torch.nn.functional.normalize(decoder_weights.T, dim=1)
+                normalized_embds = torch.nn.functional.normalize(self.embd_dictionary, dim=1)
+            
+            # Calculate cosine similarity matrix and get max similarities
+            cos_sim = torch.matmul(normalized_weights, normalized_embds.T)
+            max_sims, max_embd_idx = cos_sim.max(dim=1)
+            
+            # Create mask for neurons above similarity threshold
+            above_threshold = max_sims >= self.cosine_similarity_threshold
+            
+            # For each embedding, find redundant neurons in one operation
+            n_embds = len(self.embd_dictionary)
+            embd_masks = max_embd_idx.unsqueeze(1) == torch.arange(n_embds, device=max_embd_idx.device)
+            aligned_groups = embd_masks & above_threshold.unsqueeze(1)
+            
+            # Find best neuron for each embedding group
+            group_sims = max_sims.unsqueeze(1).expand(-1, n_embds) * aligned_groups
+            best_neurons = group_sims.argmax(dim=0)
+            
+            # Create mask for redundant neurons
+            redundant_mask = torch.zeros_like(max_sims, dtype=torch.bool)
+            for embd_idx in range(n_embds):
+                group_mask = aligned_groups[:, embd_idx]
+                if group_mask.sum() > 1:  # More than one neuron in group
+                    best_neuron = best_neurons[embd_idx]
+                    redundant_mask |= (group_mask & (torch.arange(len(max_sims), device=max_sims.device) != best_neuron))
+            
+            # Get redundant neuron indices
+            redundant_indices = torch.where(redundant_mask)[0]
+            
+            # Combine with dead neurons if any redundant found
+            if len(redundant_indices) > 0:
+                dead_indices[component_idx] = torch.unique(
+                    torch.cat([dead_indices[component_idx], redundant_indices])
+                )
+        return dead_indices
+    
+    def resample_dead_neurons(
+        self,
+        activation_store: ActivationStore,
+        autoencoder: SparseAutoencoder,
+        loss_fn: AbstractLoss,
+        train_batch_size: int,
+    ) -> list[ParameterUpdateResults]:
+        """Store autoencoder reference and call parent implementation."""
+        # Store reference to autoencoder for use in _get_dead_neuron_indices
+        self.autoencoder = autoencoder
+        return super().resample_dead_neurons(
+            activation_store=activation_store,
+            autoencoder=autoencoder,
+            loss_fn=loss_fn,
+            train_batch_size=train_batch_size
+        )
