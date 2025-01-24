@@ -572,12 +572,7 @@ class MaxCosSimLossOnDecoder(MaxCosSimLoss):
 
 
 class EmbeddingAlignedResampler(ActivationResampler):
-    """Activation resampler that considers embedding alignment.
-    
-    In addition to standard dead neuron resampling, this resampler also identifies neurons
-    that are redundantly aligned to the same embedding vector and resamples all but the
-    strongest one.
-    """
+    """Activation resampler that considers embedding alignment."""
     
     def __init__(
         self,
@@ -587,18 +582,11 @@ class EmbeddingAlignedResampler(ActivationResampler):
         *args,
         **kwargs
     ) -> None:
-        """Initialize the embedding-aligned resampler.
-        
-        Args:
-            embd_dictionary: Tensor of embedding vectors to align against
-            cosine_similarity_threshold: Threshold above which two neurons are considered to
-                share the same embedding (default: 0.8)
-            *args, **kwargs: Arguments passed to parent ActivationResampler
-        """
         super().__init__(*args, **kwargs)
         self.embd_dictionary = embd_dictionary
         self.cosine_similarity_threshold = cosine_similarity_threshold
         self.use_encoder = use_encoder
+        
     def _get_dead_neuron_indices(self) -> list[Int64[Tensor, Axis.names(Axis.LEARNT_FEATURE_IDX)]]:
         """Get indices of neurons to resample.
         
@@ -610,18 +598,19 @@ class EmbeddingAlignedResampler(ActivationResampler):
         # First get standard dead neurons
         dead_indices = super()._get_dead_neuron_indices()
         
+        # Track statistics for each component
+        resample_stats = []
+        
         # For each component, identify and add redundant neurons
         for component_idx in range(self._n_components):
             if self.use_encoder:
-                # Get encoder weights for this component and normalize
-                encoder_weights = self.autoencoder.encoder.weight[component_idx]
-                normalized_weights = torch.nn.functional.normalize(encoder_weights, dim=1)
-                normalized_embds = torch.nn.functional.normalize(self.embd_dictionary, dim=1)
+                weights = self.autoencoder.encoder.weight[component_idx]
+                normalized_weights = torch.nn.functional.normalize(weights, dim=1)
             else:
-                # Get decoder weights for this component and normalize
-                decoder_weights = self.autoencoder.decoder.weight[component_idx]
-                normalized_weights = torch.nn.functional.normalize(decoder_weights.T, dim=1)
-                normalized_embds = torch.nn.functional.normalize(self.embd_dictionary, dim=1)
+                weights = self.autoencoder.decoder.weight[component_idx]
+                normalized_weights = torch.nn.functional.normalize(weights.T, dim=1)
+                
+            normalized_embds = torch.nn.functional.normalize(self.embd_dictionary, dim=1)
             
             # Calculate cosine similarity matrix and get max similarities
             cos_sim = torch.matmul(normalized_weights, normalized_embds.T)
@@ -630,7 +619,7 @@ class EmbeddingAlignedResampler(ActivationResampler):
             # Create mask for neurons above similarity threshold
             above_threshold = max_sims >= self.cosine_similarity_threshold
             
-            # For each embedding, find redundant neurons in one operation
+            # For each embedding, find redundant neurons
             n_embds = len(self.embd_dictionary)
             embd_masks = max_embd_idx.unsqueeze(1) == torch.arange(n_embds, device=max_embd_idx.device)
             aligned_groups = embd_masks & above_threshold.unsqueeze(1)
@@ -641,20 +630,56 @@ class EmbeddingAlignedResampler(ActivationResampler):
             
             # Create mask for redundant neurons
             redundant_mask = torch.zeros_like(max_sims, dtype=torch.bool)
+            redundant_groups = []  # Track groups with redundancies
+            
             for embd_idx in range(n_embds):
                 group_mask = aligned_groups[:, embd_idx]
                 if group_mask.sum() > 1:  # More than one neuron in group
                     best_neuron = best_neurons[embd_idx]
+                    redundant_indices = torch.where(group_mask & (torch.arange(len(max_sims), device=max_sims.device) != best_neuron))[0]
                     redundant_mask |= (group_mask & (torch.arange(len(max_sims), device=max_sims.device) != best_neuron))
+                    
+                    if len(redundant_indices) > 0:
+                        redundant_groups.append({
+                            'embedding_idx': embd_idx,
+                            'best_neuron': best_neuron.item(),
+                            'redundant_neurons': redundant_indices.tolist(),
+                            'similarity': max_sims[best_neuron].item()
+                        })
             
-            # Get redundant neuron indices
+            # Combine dead and redundant indices
+            original_dead = dead_indices[component_idx]
             redundant_indices = torch.where(redundant_mask)[0]
+            combined_indices = torch.unique(torch.cat([original_dead, redundant_indices.to(original_dead.device)]))
+            dead_indices[component_idx] = combined_indices
             
-            # Combine with dead neurons if any redundant found
-            if len(redundant_indices) > 0:
-                dead_indices[component_idx] = torch.unique(
-                    torch.cat([dead_indices[component_idx], redundant_indices])
-                )
+            # Collect statistics for this component
+            stats = {
+                'component_idx': component_idx,
+                'n_dead_neurons': len(original_dead),
+                'n_redundant_neurons': len(redundant_indices),
+                'n_total_resampled': len(combined_indices),
+                'redundant_groups': redundant_groups,
+                'mean_max_similarity': max_sims.mean().item(),
+                'n_above_threshold': above_threshold.sum().item()
+            }
+            resample_stats.append(stats)
+            
+            # Log statistics if wandb is available
+            if wandb.run is not None:
+                # Log summary statistics
+                log_dict = {
+                    f"resample/redundant_neurons_summary": len(redundant_indices),
+                    f"resample/neurons_above_threshold_summary": above_threshold.sum().item(),
+                    f"resample/neurons_dead_summary": len(original_dead),
+                    f"resample/total_resampled_summary": len(combined_indices),
+                    f"resample/mean_max_similarity_summary": max_sims.mean().item(),
+                }
+                wandb.log(log_dict)
+        
+        # Store stats for potential later use
+        self.last_resample_stats = resample_stats
+        
         return dead_indices
     
     def resample_dead_neurons(
