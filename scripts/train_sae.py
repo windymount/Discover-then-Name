@@ -1,4 +1,4 @@
-from dncbm.custom_pipeline import AlignmentLossType, Pipeline, PipelineWithAlignment
+from dncbm.custom_pipeline import AlignmentLossType, Pipeline, PipelineWithAlignment, EmbeddingAlignedResampler
 import os
 from pathlib import Path
 
@@ -58,13 +58,38 @@ optimizer = AdamWithReset(
 
 print(f"Optimizer created at {time() - start_time} seconds")
 actual_resample_interval = 1
-activation_resampler = ActivationResampler(
-    resample_interval=actual_resample_interval,
-    n_activations_activity_collate=actual_resample_interval,
-    max_n_resamples=math.inf,
-    n_learned_features=n_learned_features, resample_epoch_freq=args.resample_freq,
-    resample_dataset_size=args.resample_dataset_size,
-)
+
+if args.resample_aligned_neuron and args.alignment_lam > 0.0:
+    # Load embeddings dictionary if not already loaded
+    if 'embd_dictionary' not in locals():
+        embeddings_path = os.path.join(args.vocab_dir, 
+                                     f"embeddings_{args.img_enc_name_for_saving}_clipdissect_20k.pth")
+        embd_dictionary = torch.load(embeddings_path).float().cuda()
+        print(f"Loaded embeddings dictionary for alignment from {embeddings_path}")
+    
+    # Create aligned resampler
+    activation_resampler = EmbeddingAlignedResampler(
+        embd_dictionary=embd_dictionary,
+        cosine_similarity_threshold=0.8,
+        use_encoder=args.align_loss_type.endswith("encoder"),
+        resample_interval=actual_resample_interval,
+        n_activations_activity_collate=actual_resample_interval,
+        max_n_resamples=math.inf,
+        n_learned_features=n_learned_features,
+        resample_epoch_freq=args.resample_freq,
+        resample_dataset_size=args.resample_dataset_size,
+    )
+    print("Using embedding-aligned resampler")
+else:
+    # Use standard resampler
+    activation_resampler = ActivationResampler(
+        resample_interval=actual_resample_interval,
+        n_activations_activity_collate=actual_resample_interval,
+        max_n_resamples=math.inf,
+        n_learned_features=n_learned_features,
+        resample_epoch_freq=args.resample_freq,
+        resample_dataset_size=args.resample_dataset_size,
+    )
 
 print(f"Activation resampler created at {time() - start_time} seconds")
 
