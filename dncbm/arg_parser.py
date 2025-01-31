@@ -73,4 +73,6 @@ def get_common_parser():
                         help='Type of alignment loss to use')
     parser.add_argument('--resample_aligned_neuron', action='store_true', default=False,
                        help='Use embedding-aligned neuron resampling')
+    parser.add_argument('--max_n_resamples', type=int, default=0,
+                       help='Maximum number of times a neuron can be resampled. Use 0 for infinite.')
     return parser

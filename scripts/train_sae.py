@@ -20,6 +20,7 @@ from time import time
 
 from dncbm.arg_parser import get_common_parser
 from dncbm.utils import common_init
+from typing import Optional
 
 
 parser = get_common_parser()
@@ -67,25 +68,25 @@ if args.resample_aligned_neuron and args.alignment_lam > 0.0:
         embd_dictionary = torch.load(embeddings_path).float().cuda()
         print(f"Loaded embeddings dictionary for alignment from {embeddings_path}")
     
-    # Create aligned resampler
+    # Create aligned resampler with max_n_resamples parameter
     activation_resampler = EmbeddingAlignedResampler(
         embd_dictionary=embd_dictionary,
         cosine_similarity_threshold=0.8,
         use_encoder=args.align_loss_type.endswith("encoder"),
         resample_interval=actual_resample_interval,
         n_activations_activity_collate=actual_resample_interval,
-        max_n_resamples=math.inf,
+        max_n_resamples=args.max_n_resamples if args.max_n_resamples > 0 else math.inf,
         n_learned_features=n_learned_features,
         resample_epoch_freq=args.resample_freq,
         resample_dataset_size=args.resample_dataset_size,
     )
     print("Using embedding-aligned resampler")
 else:
-    # Use standard resampler
+    # Use standard resampler with max_n_resamples parameter
     activation_resampler = ActivationResampler(
         resample_interval=actual_resample_interval,
         n_activations_activity_collate=actual_resample_interval,
-        max_n_resamples=math.inf,
+        max_n_resamples=args.max_n_resamples if args.max_n_resamples > 0 else math.inf,
         n_learned_features=n_learned_features,
         resample_epoch_freq=args.resample_freq,
         resample_dataset_size=args.resample_dataset_size,
