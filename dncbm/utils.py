@@ -1,9 +1,11 @@
 # import sys
+import math
 import torchvision
 import os.path as osp
 import torch
 import random
 import numpy as np
+from tqdm import tqdm
 from dncbm import config
 from pathlib import Path
 from dncbm.data_utils import probe_classnames
@@ -217,3 +219,59 @@ def get_probe_dataset(probe_dataset, probe_split, probe_dataset_root_dir, prepro
     if split_idxs is not None:
         dataset = torch.utils.data.Subset(dataset, split_idxs)
     return dataset
+
+
+def cos_similarity_cubed(clip_feats, target_feats, device='cuda', batch_size=10000, min_norm=1e-3):
+    """
+    Substract mean from each vector, then raises to third power and compares cos similarity
+    Does not modify any tensors in place
+    """
+    with torch.no_grad():
+        torch.cuda.empty_cache()
+        
+        clip_feats = clip_feats - torch.mean(clip_feats, dim=0, keepdim=True)
+        target_feats = target_feats - torch.mean(target_feats, dim=0, keepdim=True)
+        
+        clip_feats = clip_feats**3
+        target_feats = target_feats**3
+        
+        clip_feats = clip_feats/torch.clip(torch.norm(clip_feats, p=2, dim=0, keepdim=True), min_norm)
+        target_feats = target_feats/torch.clip(torch.norm(target_feats, p=2, dim=0, keepdim=True), min_norm)
+        
+        similarities = []
+        for t_i in tqdm(range(math.ceil(target_feats.shape[1]/batch_size))):
+            curr_similarities = []
+            curr_target = target_feats[:, t_i*batch_size:(t_i+1)*batch_size].to(device).T
+            for c_i in range(math.ceil(clip_feats.shape[1]/batch_size)):
+                curr_similarities.append(curr_target.float() @ clip_feats[:, c_i*batch_size:(c_i+1)*batch_size].to(device).float())
+            similarities.append(torch.cat(curr_similarities, dim=1))
+    return torch.cat(similarities, dim=0)
+
+
+def soft_wpmi(clip_feats, target_feats, top_k=100, a=10, lam=1, device='cuda',
+                        min_prob=1e-7, p_start=0.998, p_end=0.97):
+    
+    with torch.no_grad():
+        torch.cuda.empty_cache()
+        clip_feats = torch.nn.functional.softmax(a*clip_feats, dim=1)
+
+        inds = torch.topk(target_feats, dim=0, k=top_k)[1]
+        prob_d_given_e = []
+
+        p_in_examples = p_start-(torch.arange(start=0, end=top_k)/top_k*(p_start-p_end)).unsqueeze(1).to(device)
+        for orig_id in tqdm(range(target_feats.shape[1])):
+            
+            curr_clip_feats = clip_feats.gather(0, inds[:,orig_id:orig_id+1].expand(-1,clip_feats.shape[1])).to(device)
+            
+            curr_p_d_given_e = 1+p_in_examples*(curr_clip_feats-1)
+            curr_p_d_given_e = torch.sum(torch.log(curr_p_d_given_e+min_prob), dim=0, keepdim=True)
+            prob_d_given_e.append(curr_p_d_given_e)
+            torch.cuda.empty_cache()
+
+        prob_d_given_e = torch.cat(prob_d_given_e, dim=0)
+        print(prob_d_given_e.shape)
+        #logsumexp trick to avoid underflow
+        prob_d = (torch.logsumexp(prob_d_given_e, dim=0, keepdim=True) - 
+                  torch.log(prob_d_given_e.shape[0]*torch.ones([1]).to(device)))
+        mutual_info = prob_d_given_e - lam*prob_d
+    return mutual_info

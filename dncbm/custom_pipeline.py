@@ -9,6 +9,7 @@ import torch
 from torch import Tensor
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
+from dncbm.utils import soft_wpmi, cos_similarity_cubed
 import wandb
 from sparse_autoencoder.metrics.abstract_metric import ComponentAggregationApproach, MetricLocation, MetricResult
 from sparse_autoencoder.activation_resampler.activation_resampler import ActivationResampler
@@ -422,6 +423,8 @@ class PipelineWithAlignment(Pipeline):
     def __init__(self, align_lambda, embd_dictionary, align_loss_type: AlignmentLossType = AlignmentLossType.maha_encoder, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.align_lambda = align_lambda
+        self.embd_dictionary = embd_dictionary
+        self.clip_embd = None
         # Choose alignment loss based on type
         if align_loss_type == AlignmentLossType.maha_encoder:
             self.alignment_loss = MahaLossOnEncoder(embd_dictionary)
@@ -532,7 +535,58 @@ class PipelineWithAlignment(Pipeline):
                     commit=False,
                 )
         return learned_activations_fired_count
-
+    
+    def validation(self, activation_store, train_batch_size):
+        activations_dataloader = DataLoader(
+            activation_store, batch_size=train_batch_size, shuffle=True)
+        if self.clip_embd is None:
+            with torch.no_grad():
+                embd_list = []
+                for _, store_batch in enumerate(activations_dataloader):
+                    batch = store_batch.detach().to(self.embd_dictionary.device)
+                    embd_list.append((batch @ self.embd_dictionary.T).to("cpu"))
+                self.clip_embd = torch.cat(embd_list, dim=0).squeeze(1)
+        with torch.no_grad():
+            total_losses = torch.zeros((4, len(activations_dataloader)))
+            with tqdm(desc="Validation", total=len(activations_dataloader),) as progress_bar:
+                activations = []
+                for batch_id, store_batch in enumerate(activations_dataloader):
+                    batch = store_batch.detach().to(self.device)
+                    # Forward pass
+                    learned_activations, reconstructed_activations = self.autoencoder.forward(
+                        batch)
+                    _, loss_metrics = self.loss.scalar_loss_with_log(
+                        batch,
+                        learned_activations,
+                        reconstructed_activations,
+                        component_reduction=LossReductionType.MEAN
+                    )
+                    for loss_id, loss_metric in enumerate(loss_metrics):
+                        total_losses[loss_id,
+                                     batch_id] = loss_metric.component_wise_values
+                    mean_losses = total_losses.mean(dim=1)
+                    activations.append(learned_activations.to("cpu"))
+                    progress_bar.update(1)
+                # Calculate similarity
+                activations = torch.cat(activations, dim=0).squeeze(1)
+                cos_cubed = cos_similarity_cubed(self.clip_embd, activations)
+                wpmi = soft_wpmi(self.clip_embd, activations)
+                sim_logs = {}
+                sim_logs.update(MetricResult(
+                    component_wise_values=[cos_cubed.max(dim=1).values.mean().item()],
+                    name="cos_cubed",
+                    location=MetricLocation.VALIDATE,
+                    aggregate_approach=ComponentAggregationApproach.MEAN
+                ).wandb_log)
+                sim_logs.update(MetricResult(
+                    component_wise_values=[wpmi.max(dim=1).values.mean().item()],
+                    name="wpmi",
+                    location=MetricLocation.VALIDATE,
+                    aggregate_approach=ComponentAggregationApproach.MEAN
+                ).wandb_log)
+                wandb.log(
+                    sim_logs, step=self.total_activations_trained_on, commit=True,)
+                return loss_metrics, mean_losses
 
 class MahalanobisAlignmentLoss():
     def __init__(self, embd_dictionary):
