@@ -63,8 +63,7 @@ actual_resample_interval = 1
 if args.resample_aligned_neuron and args.alignment_lam > 0.0:
     # Load embeddings dictionary if not already loaded
     if 'embd_dictionary' not in locals():
-        embeddings_path = os.path.join(args.vocab_dir, 
-                                     f"embeddings_{args.img_enc_name_for_saving}_clipdissect_20k.pth")
+        embeddings_path = os.path.join(args.vocab_dir, args.embeddings_filename)
         embd_dictionary = torch.load(embeddings_path).float().cuda()
         print(f"Loaded embeddings dictionary for alignment from {embeddings_path}")
     
@@ -119,10 +118,9 @@ if args.use_wandb:
     print(f"Wandb initialized at {time() - start_time} seconds")
 
 
-if args.alignment_lam > 0.0:
+if args.alignment_lam >= 0.0:
     # Load embeddings dictionary for alignment
-    embeddings_path = os.path.join(args.vocab_dir, 
-                                 f"embeddings_{args.img_enc_name_for_saving}_clipdissect_20k.pth")
+    embeddings_path = os.path.join(args.vocab_dir, args.embeddings_filename)
     embd_dictionary = torch.load(embeddings_path).float().cuda()
     print(f"Loaded embeddings dictionary for alignment from {embeddings_path}")
     

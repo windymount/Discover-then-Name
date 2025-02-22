@@ -115,7 +115,7 @@ def common_init(args, disable_make_dirs=False):
     if args.max_n_resamples > 0:
         resample_suffix += f"_maxr{args.max_n_resamples}"
         
-    args.config_name = f"lr{args.lr}_l1coeff{args.l1_coeff}_ef{args.expansion_factor}{resample_suffix}_hook{args.hook_points[0]}_bs{args.train_sae_bs}_epo{args.num_epochs}{align_suffix}"
+    args.config_name = f"vocab_{args.vocab_embedding_file}_lr{args.lr}_l1coeff{args.l1_coeff}_ef{args.expansion_factor}{resample_suffix}_hook{args.hook_points[0]}_bs{args.train_sae_bs}_epo{args.num_epochs}{align_suffix}"
     
     # Update CSV config name to include max_n_resamples
     args.config_name_csv = f"{args.img_enc_name},{args.hook_points[0]},{args.sae_dataset},{args.lr},{args.l1_coeff},{args.expansion_factor},{args.resample_freq},{args.max_n_resamples},{args.train_sae_bs},{args.num_epochs},{args.alignment_lam},{args.align_loss_type},{args.resample_aligned_neuron}"
@@ -127,8 +127,11 @@ def common_init(args, disable_make_dirs=False):
     args.data_dir_root = config.data_dir_root
     args.save_dir_root = config.save_dir_root
     args.probe_cs_save_dir_root = config.probe_cs_save_dir_root
-    args.vocab_dir  = config.vocab_dir
+    args.vocab_dir = config.vocab_dir
     args.analysis_dir = config.analysis_dir
+
+    # Set the embeddings filename based on the vocab_embedding_file argument
+    args.embeddings_filename = f"embeddings_{args.img_enc_name_for_saving}_{args.vocab_embedding_file}.pth"
 
     args.data_dir_activations = {}
     args.data_dir_activations["img"] = osp.join(
@@ -275,3 +278,50 @@ def soft_wpmi(clip_feats, target_feats, top_k=100, a=10, lam=1, device='cuda',
                   torch.log(prob_d_given_e.shape[0]*torch.ones([1]).to(device)))
         mutual_info = prob_d_given_e - lam*prob_d
     return mutual_info
+
+
+def correlation_coefficient(clip_feats, target_feats, device='cuda', batch_size=2048):
+    """Calculate pairwise correlation coefficients between two sets of features.
+    
+    Args:
+        clip_feats: First set of features (n_samples, n_features1)
+        target_feats: Second set of features (n_samples, n_features2)
+        device: Device to perform computation on
+        batch_size: Batch size for memory efficiency
+        
+    Returns:
+        Tensor of correlation coefficients (n_features1, n_features2)
+    """
+    with torch.no_grad():
+        torch.cuda.empty_cache()
+        
+        # Center the features
+        clip_feats = clip_feats - torch.mean(clip_feats, dim=0, keepdim=True)
+        target_feats = target_feats - torch.mean(target_feats, dim=0, keepdim=True)
+        
+        # Calculate standard deviations
+        clip_std = torch.std(clip_feats, dim=0, keepdim=True)
+        target_std = torch.std(target_feats, dim=0, keepdim=True)
+        
+        # Normalize features
+        clip_feats = clip_feats / (clip_std + 1e-8)
+        target_feats = target_feats / (target_std + 1e-8)
+        
+        # Calculate correlation coefficients in batches
+        correlations = []
+        for t_i in tqdm(range(math.ceil(target_feats.shape[1]/batch_size))):
+            curr_correlations = []
+            curr_target = target_feats[:, t_i*batch_size:(t_i+1)*batch_size].to(device)
+            
+            for c_i in range(math.ceil(clip_feats.shape[1]/batch_size)):
+                # Calculate correlation for current batch
+                curr_clip = clip_feats[:, c_i*batch_size:(c_i+1)*batch_size].to(device)
+                curr_corr = (curr_target.T @ curr_clip) / (clip_feats.shape[0] - 1)
+                curr_correlations.append(curr_corr)
+                
+            correlations.append(torch.cat(curr_correlations, dim=1))
+            
+        return torch.cat(correlations, dim=0)
+
+
+

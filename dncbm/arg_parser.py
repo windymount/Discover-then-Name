@@ -75,4 +75,6 @@ def get_common_parser():
                        help='Use embedding-aligned neuron resampling')
     parser.add_argument('--max_n_resamples', type=int, default=0,
                        help='Maximum number of times a neuron can be resampled. Use 0 for infinite.')
+    parser.add_argument('--vocab_embedding_file', type=str, default="clipdissect_20k",
+                        help='Name of vocabulary embedding file (without extension)')
     return parser
