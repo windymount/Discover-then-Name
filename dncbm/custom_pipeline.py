@@ -9,7 +9,7 @@ import torch
 from torch import Tensor
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
-from dncbm.utils import soft_wpmi, cos_similarity_cubed
+from dncbm.utils import soft_wpmi, cos_similarity_cubed, correlation_coefficient
 import wandb
 from sparse_autoencoder.metrics.abstract_metric import ComponentAggregationApproach, MetricLocation, MetricResult
 from sparse_autoencoder.activation_resampler.activation_resampler import ActivationResampler
@@ -538,7 +538,7 @@ class PipelineWithAlignment(Pipeline):
     
     def validation(self, activation_store, train_batch_size):
         activations_dataloader = DataLoader(
-            activation_store, batch_size=train_batch_size, shuffle=True)
+            activation_store, batch_size=train_batch_size, shuffle=False)
         if self.clip_embd is None:
             with torch.no_grad():
                 embd_list = []
@@ -571,6 +571,7 @@ class PipelineWithAlignment(Pipeline):
                 activations = torch.cat(activations, dim=0).squeeze(1)
                 cos_cubed = cos_similarity_cubed(self.clip_embd, activations)
                 wpmi = soft_wpmi(self.clip_embd, activations)
+                correlation = correlation_coefficient(self.clip_embd, activations)
                 sim_logs = {}
                 sim_logs.update(MetricResult(
                     component_wise_values=[cos_cubed.max(dim=1).values.mean().item()],
@@ -581,6 +582,51 @@ class PipelineWithAlignment(Pipeline):
                 sim_logs.update(MetricResult(
                     component_wise_values=[wpmi.max(dim=1).values.mean().item()],
                     name="wpmi",
+                    location=MetricLocation.VALIDATE,
+                    aggregate_approach=ComponentAggregationApproach.MEAN
+                ).wandb_log)
+                sim_logs.update(MetricResult(
+                    component_wise_values=[correlation.max(dim=1).values.mean().item()],
+                    name="correlation",
+                    location=MetricLocation.VALIDATE,
+                    aggregate_approach=ComponentAggregationApproach.MEAN
+                ).wandb_log)
+                target_sim = correlation
+                valid_neurons = target_sim.max(dim=1).values > 0.15
+                val_nondup_neurons_cos = torch.zeros_like(valid_neurons, dtype=torch.bool)
+                # For each embedding, find redundant neurons
+                max_sims, max_embd_idx = target_sim.max(dim=1)
+                n_embds = target_sim.shape[1]
+                embd_masks = max_embd_idx.unsqueeze(1) == torch.arange(n_embds, device=max_embd_idx.device)
+                aligned_groups = embd_masks & valid_neurons.unsqueeze(1)
+                group_sims = max_sims.unsqueeze(1).expand(-1, n_embds) * aligned_groups
+                best_neurons = group_sims.argmax(dim=0)
+                for embd_idx in range(n_embds):
+                    group_mask = aligned_groups[:, embd_idx]
+                    if group_mask.sum() > 0:  # At least one neuron in group
+                        best_neuron = best_neurons[embd_idx]
+                        val_nondup_neurons_cos |= (group_mask & (torch.arange(len(max_sims), device=max_sims.device) == best_neuron))
+                sim_logs.update(MetricResult(
+                    component_wise_values=[val_nondup_neurons_cos.sum().item()],
+                    name="valid_unique_neurons",
+                    location=MetricLocation.VALIDATE,
+                    aggregate_approach=ComponentAggregationApproach.MEAN
+                ).wandb_log)
+                sim_logs.update(MetricResult(
+                    component_wise_values=[cos_cubed.max(dim=1).values[val_nondup_neurons_cos].mean().item()],
+                    name="valid_unique_avg_cos_cubed",
+                    location=MetricLocation.VALIDATE,
+                    aggregate_approach=ComponentAggregationApproach.MEAN
+                ).wandb_log)
+                sim_logs.update(MetricResult(
+                    component_wise_values=[wpmi.max(dim=1).values[val_nondup_neurons_cos].mean().item()],
+                    name="valid_unique_avg_wpmi",
+                    location=MetricLocation.VALIDATE,
+                    aggregate_approach=ComponentAggregationApproach.MEAN
+                ).wandb_log)
+                sim_logs.update(MetricResult(
+                    component_wise_values=[correlation.max(dim=1).values[val_nondup_neurons_cos].mean().item()],
+                    name="valid_unique_avg_correlation",
                     location=MetricLocation.VALIDATE,
                     aggregate_approach=ComponentAggregationApproach.MEAN
                 ).wandb_log)
