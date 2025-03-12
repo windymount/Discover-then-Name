@@ -1,4 +1,5 @@
 from dncbm.custom_pipeline import AlignmentLossType, Pipeline, PipelineWithAlignment, EmbeddingAlignedResampler
+from dncbm.customized_sae import ReLUSparseAutoencoder, TopKSparseAutoencoder
 import os
 from pathlib import Path
 
@@ -29,22 +30,38 @@ common_init(args)
 start_time = time()
 
 
+# Create autoencoder based on specified type
 autoencoder_input_dim: int = args.autoencoder_input_dim_dict[
     args.ae_input_dim_dict_key[args.modality]]
 n_learned_features = int(autoencoder_input_dim * args.expansion_factor)
-autoencoder = SparseAutoencoder(n_input_features=autoencoder_input_dim,
-                                n_learned_features=n_learned_features, n_components=len(args.hook_points)).to(args.device)
-print(f"Autoencoder created at {time() - start_time} seconds")
+
+if args.sae_type == "ReLUSAE":
+    autoencoder = ReLUSparseAutoencoder(
+        n_input_features=autoencoder_input_dim,
+        n_learned_features=n_learned_features, 
+        n_components=len(args.hook_points)
+    ).to(args.device)
+    loss = LossReducer(LearnedActivationsL1Loss(
+    l1_coefficient=float(args.l1_coeff),), L2ReconstructionLoss(),)
+elif args.sae_type == "TopKSAE":
+    autoencoder = TopKSparseAutoencoder(
+        n_input_features=autoencoder_input_dim,
+        n_learned_features=n_learned_features,
+        k=int(n_learned_features * 0.1),  # Use 10% of features as k
+        aux_k=int(n_learned_features * 0.05),  # Use 5% of features as aux_k
+        n_components=len(args.hook_points)
+    ).to(args.device)
+    loss = L2ReconstructionLoss()
+else:
+    raise ValueError(f"Unknown SAE type: {args.sae_type}")
+
+print(f"Autoencoder ({args.sae_type}) created at {time() - start_time} seconds")
 
 print(
     f"------------Getting Image activations from directory: {args.data_dir_activations[args.modality]}")
 print(f"------------Getting Image activations from model: {args.img_enc_name}")
 
 
-# We use a loss reducer, which simply adds up the losses from the underlying loss functions.
-loss = LossReducer(LearnedActivationsL1Loss(
-    l1_coefficient=float(args.l1_coeff),), L2ReconstructionLoss(),)
-print(f"Loss created at {time() - start_time} seconds")
 
 optimizer = AdamWithReset(
     params=autoencoder.parameters(),

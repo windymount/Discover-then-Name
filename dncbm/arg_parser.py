@@ -77,4 +77,7 @@ def get_common_parser():
                        help='Maximum number of times a neuron can be resampled. Use 0 for infinite.')
     parser.add_argument('--vocab_embedding_file', type=str, default="clipdissect_20k",
                         help='Name of vocabulary embedding file (without extension)')
+    parser.add_argument("--sae_type", type=str, default="ReLUSAE",
+                        choices=["ReLUSAE", "TopKSAE"],
+                        help="Type of sparse autoencoder to use")
     return parser

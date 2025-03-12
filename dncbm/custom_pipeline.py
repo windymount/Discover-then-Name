@@ -125,7 +125,7 @@ class Pipeline:
             batch = store_batch.detach().to(self.device)
 
             # Forward pass
-            learned_activations, reconstructed_activations = self.autoencoder.forward(
+            (learned_activations, reconstructed_activations), aux_loss = self.autoencoder.forward(
                 batch)
 
             # Get loss & metrics
@@ -136,6 +136,7 @@ class Pipeline:
                 reconstructed_activations,
                 component_reduction=LossReductionType.MEAN
             )
+            total_loss += aux_loss
             metrics.extend(loss_metrics)
 
             with torch.no_grad():
@@ -476,7 +477,7 @@ class PipelineWithAlignment(Pipeline):
             batch = store_batch.detach().to(self.device)
 
             # Forward pass
-            learned_activations, reconstructed_activations = self.autoencoder.forward(
+            (learned_activations, reconstructed_activations), aux_loss = self.autoencoder.forward(
                 batch)
 
             # Get loss & metrics
@@ -487,6 +488,7 @@ class PipelineWithAlignment(Pipeline):
                 reconstructed_activations,
                 component_reduction=LossReductionType.MEAN
             )
+            total_loss += aux_loss
             metrics.extend(loss_metrics)
 
             with torch.no_grad():

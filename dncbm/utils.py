@@ -103,7 +103,8 @@ def common_init(args, disable_make_dirs=False):
     """
     set_seed(args.seed)
 
-    # Update config_name to include alignment type and resampling strategy
+    # Update config_name to include SAE type, alignment type and resampling strategy
+    sae_type_suffix = f"_sae{args.sae_type}"
     align_suffix = f"_align{args.alignment_lam}"
     if args.alignment_lam > 0:
         align_suffix += f"_{args.align_loss_type}"
@@ -115,10 +116,10 @@ def common_init(args, disable_make_dirs=False):
     if args.max_n_resamples > 0:
         resample_suffix += f"_maxr{args.max_n_resamples}"
         
-    args.config_name = f"vocab_{args.vocab_embedding_file}_lr{args.lr}_l1coeff{args.l1_coeff}_ef{args.expansion_factor}{resample_suffix}_hook{args.hook_points[0]}_bs{args.train_sae_bs}_epo{args.num_epochs}{align_suffix}"
+    args.config_name = f"vocab_{args.vocab_embedding_file}_{args.sae_dataset}_lr{args.lr}_l1coeff{args.l1_coeff}_ef{args.expansion_factor}{sae_type_suffix}{resample_suffix}_hook{args.hook_points[0]}_bs{args.train_sae_bs}_epo{args.num_epochs}{align_suffix}"
     
-    # Update CSV config name to include max_n_resamples
-    args.config_name_csv = f"{args.img_enc_name},{args.hook_points[0]},{args.sae_dataset},{args.lr},{args.l1_coeff},{args.expansion_factor},{args.resample_freq},{args.max_n_resamples},{args.train_sae_bs},{args.num_epochs},{args.alignment_lam},{args.align_loss_type},{args.resample_aligned_neuron}"
+    # Update CSV config name to include SAE type and max_n_resamples
+    args.config_name_csv = f"{args.img_enc_name},{args.hook_points[0]},{args.sae_dataset},{args.lr},{args.l1_coeff},{args.expansion_factor},{args.sae_type},{args.resample_freq},{args.max_n_resamples},{args.train_sae_bs},{args.num_epochs},{args.alignment_lam},{args.align_loss_type},{args.resample_aligned_neuron}"
 
     args.img_enc_name_for_saving = args.img_enc_name.replace('/', '')
 
