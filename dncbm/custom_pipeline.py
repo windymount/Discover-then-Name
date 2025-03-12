@@ -247,7 +247,7 @@ class Pipeline:
                 for batch_id, store_batch in enumerate(activations_dataloader):
                     batch = store_batch.detach().to(self.device)
                     # Forward pass
-                    learned_activations, reconstructed_activations = self.autoencoder.forward(
+                    (learned_activations, reconstructed_activations), _ = self.autoencoder.forward(
                         batch)
                     _, loss_metrics = self.loss.scalar_loss_with_log(
                         batch,
@@ -555,7 +555,7 @@ class PipelineWithAlignment(Pipeline):
                 for batch_id, store_batch in enumerate(activations_dataloader):
                     batch = store_batch.detach().to(self.device)
                     # Forward pass
-                    learned_activations, reconstructed_activations = self.autoencoder.forward(
+                    (learned_activations, reconstructed_activations), _ = self.autoencoder.forward(
                         batch)
                     _, loss_metrics = self.loss.scalar_loss_with_log(
                         batch,

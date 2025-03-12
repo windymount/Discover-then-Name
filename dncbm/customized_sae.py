@@ -80,8 +80,7 @@ class TopKSparseAutoencoder(SparseAutoencoder):
         
         # Create sparse activation tensor
         learned_activations = torch.zeros_like(pre_activations)
-        learned_activations.scatter(-1, topk_indices, values)
-        print(f"learned_activations.shape: {learned_activations.shape}, decoder.weight.shape: {self.decoder.weight.shape}")
+        learned_activations.scatter_(-1, topk_indices, values)
         x = self.decoder(learned_activations)
         decoded_activations = self.post_decoder_bias(x)
         aux_loss = self.aux_loss(x, pre_activations, learned_activations, decoded_activations) * self.aux_loss_weight
@@ -96,12 +95,14 @@ class TopKSparseAutoencoder(SparseAutoencoder):
         self.record_last_nonzero += 1
         self.record_last_nonzero[nonzero_features] = 0
         aux_indices = self.record_last_nonzero >= self.max_dead_steps
+        if aux_indices.sum() == 0:
+            return torch.tensor(0.0, device=pre_activations.device)
         aux_indices = aux_indices.to(pre_activations.device)
-        pre_activations *= aux_indices
+        pre_activations = pre_activations * aux_indices
         topk_aux_values, topk_aux_indices = torch.topk(pre_activations, k=self.aux_k, dim=-1)
         topk_aux_values = self.postact_fn(topk_aux_values)
         aux_activations = torch.zeros_like(pre_activations)
-        aux_activations.scatter(-1, topk_aux_indices, topk_aux_values)
+        aux_activations.scatter_(-1, topk_aux_indices, topk_aux_values)
         decoded_aux_activations = self.decoder(aux_activations)
         decoded_aux_activations = self.post_decoder_bias(decoded_aux_activations)
         target = source_activations - decoded_activations.detach()
