@@ -136,6 +136,7 @@ class Pipeline:
                 reconstructed_activations,
                 component_reduction=LossReductionType.MEAN
             )
+            wandb.log({"train/aux_loss": aux_loss.item()}, step=self.total_activations_trained_on, commit=False)
             total_loss += aux_loss
             metrics.extend(loss_metrics)
 
@@ -511,6 +512,12 @@ class PipelineWithAlignment(Pipeline):
             metrics.append(MetricResult(
                 component_wise_values=[alignment_loss.item()],
                 name="alignment_loss",
+                location=MetricLocation.TRAIN,
+                aggregate_approach=ComponentAggregationApproach.MEAN
+            ))
+            metrics.append(MetricResult(
+                component_wise_values=[aux_loss.item()],
+                name="aux_loss",
                 location=MetricLocation.TRAIN,
                 aggregate_approach=ComponentAggregationApproach.MEAN
             ))
