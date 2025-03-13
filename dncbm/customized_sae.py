@@ -2,6 +2,7 @@ from typing import Callable
 from sparse_autoencoder.loss.abstract_loss import AbstractLoss
 import torch
 import torch.nn as nn
+from geom_median.torch import compute_geometric_median
 from sparse_autoencoder.autoencoder.model import SparseAutoencoder
 from sparse_autoencoder.autoencoder.model import AutoencoderForwardPassResult
 
@@ -13,8 +14,13 @@ class ReLUSparseAutoencoder(SparseAutoencoder):
         super().__init__(*args, **kwargs)
         self.postact_fn = nn.ReLU()
     
+    def init_from_data(self, data):
+        geo_median_dataset = compute_geometric_median(data[:32768].float().cpu()).median.cuda().float()
+        self.geometric_median_dataset = geo_median_dataset
+        self.initialize_tied_parameters()
+
     def forward(self, x):
-        return super().forward(x), 0.0
+        return super().forward(x), torch.tensor(0.0, device=x.device)
 
 
 class TopKSparseAutoencoder(SparseAutoencoder):
@@ -83,8 +89,15 @@ class TopKSparseAutoencoder(SparseAutoencoder):
         learned_activations.scatter_(-1, topk_indices, values)
         x = self.decoder(learned_activations)
         decoded_activations = self.post_decoder_bias(x)
-        aux_loss = self.aux_loss(x, pre_activations, learned_activations, decoded_activations) * self.aux_loss_weight
+        aux_loss = self.aux_loss(x, pre_activations, learned_activations, decoded_activations) * self.aux_loss_weight / self.mse_scale
         return AutoencoderForwardPassResult(learned_activations, decoded_activations), aux_loss
+
+    def init_from_data(self, data):
+        geo_median_dataset = compute_geometric_median(data[:32768].float().cpu()).median.cuda().float()
+        self.geometric_median_dataset = geo_median_dataset
+        self.initialize_tied_parameters()
+        self.mse_scale = (1 / ((data[:32768].float().mean(dim=0) - data[:32768].float()) ** 2).mean()).item()
+        print(f"MSE scale: {self.mse_scale}")
 
     def aux_loss(self,
         source_activations,
@@ -110,6 +123,6 @@ class TopKSparseAutoencoder(SparseAutoencoder):
 
 
 def normalized_mse(recon, target):
-    target_mu = target.mean(dim=0, keepdim=True)
-    loss = torch.nn.functional.mse_loss(recon, target) / torch.nn.functional.mse_loss(target_mu, target)
+    target_mu = target.mean(dim=0)
+    loss = torch.nn.functional.mse_loss(recon, target) / (target ** 2).mean()
     return loss.nan_to_num(0)

@@ -298,7 +298,6 @@ class Pipeline:
                 if train_piece_idx >= num_train_pieces:
                     train_order = torch.randperm(num_train_pieces)
                     train_piece_idx = 0
-
                 train_activation_store = self.get_activation_store(
                     train_fnames[train_order[train_piece_idx]])
                 print(
@@ -307,7 +306,9 @@ class Pipeline:
                     f"{train_fnames[train_order[train_piece_idx]]}: {train_activation_store._data.shape[0]} NUM SAMPLES.")
                 train_piece_idx += 1
                 self.current_epoch = epoch
-
+                # Initialize model using data
+                if epoch == 0:
+                    self.autoencoder.init_from_data(train_activation_store)
                 # Update the counters
                 n_activation_vectors_in_store = len(train_activation_store)
                 last_validated += n_activation_vectors_in_store
