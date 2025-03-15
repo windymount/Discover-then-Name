@@ -47,8 +47,8 @@ elif args.sae_type == "TopKSAE":
     autoencoder = TopKSparseAutoencoder(
         n_input_features=autoencoder_input_dim,
         n_learned_features=n_learned_features,
-        k=64,
-        aux_k=512,
+        k=args.topk_k,
+        aux_k=args.topk_aux_k,
         max_dead_steps=1000000 / args.train_sae_bs,
         n_components=len(args.hook_points),
     ).to(args.device)

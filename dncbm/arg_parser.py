@@ -80,4 +80,8 @@ def get_common_parser():
     parser.add_argument("--sae_type", type=str, default="ReLUSAE",
                         choices=["ReLUSAE", "TopKSAE"],
                         help="Type of sparse autoencoder to use")
+    parser.add_argument("--topk_k", type=int, default=64,
+                        help="k parameter for TopK SAE - number of neurons to keep active")
+    parser.add_argument("--topk_aux_k", type=int, default=512,
+                        help="aux_k parameter for TopK SAE - number of auxiliary neurons to keep active")
     return parser

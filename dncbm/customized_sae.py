@@ -19,8 +19,11 @@ class ReLUSparseAutoencoder(SparseAutoencoder):
         self.geometric_median_dataset = geo_median_dataset
         self.initialize_tied_parameters()
 
-    def forward(self, x):
-        return super().forward(x), torch.tensor(0.0, device=x.device)
+    def forward(self, x, return_aux_loss: bool = False):
+        if return_aux_loss:
+            return super().forward(x), torch.tensor(0.0, device=x.device)
+        else:
+            return super().forward(x)
 
 
 class TopKSparseAutoencoder(SparseAutoencoder):
@@ -68,6 +71,7 @@ class TopKSparseAutoencoder(SparseAutoencoder):
     def forward(
         self,
         x,
+        return_aux_loss: bool = False
     ):
         """Forward Pass with TopK activation.
 
@@ -90,7 +94,10 @@ class TopKSparseAutoencoder(SparseAutoencoder):
         x = self.decoder(learned_activations)
         decoded_activations = self.post_decoder_bias(x)
         aux_loss = self.aux_loss(x, pre_activations, learned_activations, decoded_activations) * self.aux_loss_weight / self.mse_scale
-        return AutoencoderForwardPassResult(learned_activations, decoded_activations), aux_loss
+        if return_aux_loss:
+            return AutoencoderForwardPassResult(learned_activations, decoded_activations), aux_loss
+        else:
+            return AutoencoderForwardPassResult(learned_activations, decoded_activations)
 
     def init_from_data(self, data):
         geo_median_dataset = compute_geometric_median(data[:32768].float().cpu()).median.cuda().float()

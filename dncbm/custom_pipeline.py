@@ -126,7 +126,7 @@ class Pipeline:
 
             # Forward pass
             (learned_activations, reconstructed_activations), aux_loss = self.autoencoder.forward(
-                batch)
+                batch, return_aux_loss=True)
 
             # Get loss & metrics
             metrics: list[MetricResult] = []
@@ -189,7 +189,17 @@ class Pipeline:
         safe_name = quote_plus(name, safe="_")
         self.checkpoint_directory.mkdir(parents=True, exist_ok=True)
         file_path: Path = self.checkpoint_directory / f"{safe_name}.pt"
-
+        # Check if the file already exists
+        if file_path.exists():
+            # Delete the file
+            # Check for existing versions and increment number
+            version = 0
+            while True:
+                versioned_path = file_path.parent / f"{safe_name}_v{version}.pt"
+                if not versioned_path.exists():
+                    file_path = versioned_path
+                    break
+                version += 1
         torch.save(
             self.autoencoder.state_dict(),
             file_path,
@@ -248,7 +258,7 @@ class Pipeline:
                 for batch_id, store_batch in enumerate(activations_dataloader):
                     batch = store_batch.detach().to(self.device)
                     # Forward pass
-                    (learned_activations, reconstructed_activations), _ = self.autoencoder.forward(
+                    learned_activations, reconstructed_activations = self.autoencoder.forward(
                         batch)
                     _, loss_metrics = self.loss.scalar_loss_with_log(
                         batch,
@@ -480,7 +490,7 @@ class PipelineWithAlignment(Pipeline):
 
             # Forward pass
             (learned_activations, reconstructed_activations), aux_loss = self.autoencoder.forward(
-                batch)
+                batch, return_aux_loss=True)
 
             # Get loss & metrics
             metrics: list[MetricResult] = []
@@ -563,7 +573,7 @@ class PipelineWithAlignment(Pipeline):
                 for batch_id, store_batch in enumerate(activations_dataloader):
                     batch = store_batch.detach().to(self.device)
                     # Forward pass
-                    (learned_activations, reconstructed_activations), _ = self.autoencoder.forward(
+                    learned_activations, reconstructed_activations = self.autoencoder.forward(
                         batch)
                     _, loss_metrics = self.loss.scalar_loss_with_log(
                         batch,
