@@ -43,6 +43,8 @@ class AlignmentLossType(Enum):
     max_cos_sim_decoder = "max_cos_sim_decoder"
     softmax_sim_encoder = "softmax_sim_encoder"
     softmax_sim_decoder = "softmax_sim_decoder"
+    rand_max_sim_encoder = "rand_max_sim_encoder"
+    rand_max_sim_decoder = "rand_max_sim_decoder"
 
 
 class Pipeline:
@@ -451,6 +453,10 @@ class PipelineWithAlignment(Pipeline):
             self.alignment_loss = SoftMaxSimLossOnEncoder(embd_dictionary)
         elif align_loss_type == AlignmentLossType.softmax_sim_decoder:
             self.alignment_loss = SoftMaxSimLossOnDecoder(embd_dictionary)
+        elif align_loss_type == AlignmentLossType.rand_max_sim_encoder:
+            self.alignment_loss = RandMaxSimLossOnEncoder(embd_dictionary)
+        elif align_loss_type == AlignmentLossType.rand_max_sim_decoder:
+            self.alignment_loss = RandMaxSimLossOnDecoder(embd_dictionary)
         else:
             raise ValueError(f"Unknown alignment loss type: {align_loss_type}")
 
@@ -538,7 +544,8 @@ class PipelineWithAlignment(Pipeline):
             total_loss.backward()
             self.optimizer.step()
             self.autoencoder.post_backwards_hook()
-
+            if isinstance(self.alignment_loss, RandMaxSimLoss):
+                self.alignment_loss.current_epoch += 1
             # Log training metrics
             self.total_activations_trained_on += train_batch_size
             if (
@@ -653,6 +660,11 @@ class PipelineWithAlignment(Pipeline):
                 wandb.log(
                     sim_logs, step=self.total_activations_trained_on, commit=True,)
                 return loss_metrics, mean_losses
+    def run_pipeline(self, train_batch_size: NonNegativeInt, val_frequency: NonNegativeInt | None = None, checkpoint_frequency: NonNegativeInt | None = None, num_epochs=None, train_fnames=None, train_val_fnames=None, start_time=0, resample_epoch_freq: NonNegativeInt = 0) -> None:
+        if isinstance(self.alignment_loss, RandMaxSimLoss):
+            self.alignment_loss.max_epoch = num_epochs
+        return super().run_pipeline(train_batch_size, val_frequency, checkpoint_frequency, num_epochs, train_fnames, train_val_fnames, start_time, resample_epoch_freq)
+    
 
 class MahalanobisAlignmentLoss():
     def __init__(self, embd_dictionary):
@@ -716,6 +728,34 @@ class SoftMaxSimLossOnEncoder(SoftMaxSimLoss):
 class SoftMaxSimLossOnDecoder(SoftMaxSimLoss):
     def forward(self, sae):
         return super().forward(sae.decoder.weight.squeeze(0).T)
+
+
+class RandMaxSimLoss():
+    def __init__(self, embd_dictionary, temperature: float = 1.0, max_epoch: int = 200):
+        self.embd_dictionary = embd_dictionary
+        self.embd_dictionary = self.embd_dictionary / self.embd_dictionary.norm(dim=1, keepdim=True)
+        self.temperature = temperature
+        self.max_epoch = max_epoch
+        self.current_epoch = 0
+
+    def forward(self, weights):
+        weights = weights / weights.norm(dim=1, keepdim=True)
+        cos_sim = torch.matmul(weights, self.embd_dictionary.T)
+        select_probs = torch.softmax(cos_sim / self.temperature + self.current_epoch / self.max_epoch, dim=1)
+        # Sample indices according to select_probs for each row
+        sampled_indices = torch.multinomial(select_probs, num_samples=1).squeeze()
+        sampled_cos_sim = cos_sim[torch.arange(cos_sim.shape[0]), sampled_indices]
+        return -sampled_cos_sim.mean()
+
+
+class RandMaxSimLossOnDecoder(RandMaxSimLoss):
+    def forward(self, sae):
+        return super().forward(sae.decoder.weight.squeeze(0).T)
+
+
+class RandMaxSimLossOnEncoder(RandMaxSimLoss):
+    def forward(self, sae):
+        return super().forward(sae.encoder.weight.squeeze(0))
 
 
 class EmbeddingAlignedResampler(ActivationResampler):
