@@ -85,4 +85,6 @@ def get_common_parser():
                         help="k parameter for TopK SAE - number of neurons to keep active")
     parser.add_argument("--topk_aux_k", type=int, default=512,
                         help="aux_k parameter for TopK SAE - number of auxiliary neurons to keep active")
+    parser.add_argument("--randmax_init_T", type=float, default=1,
+                        help="temperature for randmax sim loss")
     return parser

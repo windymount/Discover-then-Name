@@ -110,6 +110,8 @@ def common_init(args, disable_make_dirs=False):
         align_suffix += f"_{args.align_loss_type}"
         if args.resample_aligned_neuron:
             align_suffix += "_aligned_resample"
+        if args.randmax_init_T != 1:
+            align_suffix += f"_randmax_init_T{args.randmax_init_T}"
             
     # Add max_n_resamples to config name if it's set
     resample_suffix = f"_rf{args.resample_freq}"

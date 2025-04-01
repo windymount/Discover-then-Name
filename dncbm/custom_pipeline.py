@@ -454,9 +454,9 @@ class PipelineWithAlignment(Pipeline):
         elif align_loss_type == AlignmentLossType.softmax_sim_decoder:
             self.alignment_loss = SoftMaxSimLossOnDecoder(embd_dictionary)
         elif align_loss_type == AlignmentLossType.rand_max_sim_encoder:
-            self.alignment_loss = RandMaxSimLossOnEncoder(embd_dictionary)
+            self.alignment_loss = RandMaxSimLossOnEncoder(embd_dictionary, temperature=self.args.randmax_init_T)
         elif align_loss_type == AlignmentLossType.rand_max_sim_decoder:
-            self.alignment_loss = RandMaxSimLossOnDecoder(embd_dictionary)
+            self.alignment_loss = RandMaxSimLossOnDecoder(embd_dictionary, temperature=self.args.randmax_init_T)
         else:
             raise ValueError(f"Unknown alignment loss type: {align_loss_type}")
 
