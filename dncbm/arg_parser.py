@@ -87,4 +87,6 @@ def get_common_parser():
                         help="aux_k parameter for TopK SAE - number of auxiliary neurons to keep active")
     parser.add_argument("--randmax_init_T", type=float, default=1,
                         help="temperature for randmax sim loss")
+    parser.add_argument("--randmax_max_epoch", type=int, default=None,
+                        help="max epoch for randmax sim loss temperature annealing. If None, uses num_epochs")
     return parser

@@ -56,6 +56,9 @@ elif args.sae_type == "TopKSAE":
 else:
     raise ValueError(f"Unknown SAE type: {args.sae_type}")
 
+# Pass max_epoch to pipeline for RandMaxSimLoss
+max_epoch = args.randmax_max_epoch if args.randmax_max_epoch is not None else args.num_epochs
+
 print(f"Autoencoder ({args.sae_type}) created at {time() - start_time} seconds")
 
 print(
@@ -155,6 +158,7 @@ if args.alignment_lam >= 0.0:
         optimizer=optimizer,
         device=args.device,
         args=args,
+        max_epoch=max_epoch,
     )
     print(f"Pipeline with alignment created at {time() - start_time} seconds")
 else:
@@ -167,6 +171,7 @@ else:
         optimizer=optimizer,
         device=args.device,
         args=args,
+        max_epoch=max_epoch,
     )
     print(f"Standard pipeline created at {time() - start_time} seconds")
 
