@@ -25,6 +25,7 @@ from typing import Optional
 
 
 parser = get_common_parser()
+parser.add_argument("--checkpoint", type=str, default=None, help="Path to checkpoint to resume training from")
 args = parser.parse_args()
 common_init(args)
 start_time = time()
@@ -61,6 +62,13 @@ max_epoch = args.randmax_max_epoch if args.randmax_max_epoch is not None else ar
 
 print(f"Autoencoder ({args.sae_type}) created at {time() - start_time} seconds")
 
+# Load from checkpoint if specified
+if args.checkpoint is not None:
+    print(f"Loading checkpoint from {args.checkpoint}")
+    checkpoint = torch.load(args.checkpoint)
+    autoencoder.load_state_dict(checkpoint)
+    print(f"Loaded checkpoint at {time() - start_time} seconds")
+
 print(
     f"------------Getting Image activations from directory: {args.data_dir_activations[args.modality]}")
 print(f"------------Getting Image activations from model: {args.img_enc_name}")
@@ -77,6 +85,11 @@ optimizer = AdamWithReset(
     weight_decay=float(args.adam_weight_decay),
     has_components_dim=True,
 )
+
+# Load optimizer state from checkpoint if available
+if args.checkpoint is not None and 'optimizer_state_dict' in checkpoint:
+    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    print(f"Loaded optimizer state from checkpoint at {time() - start_time} seconds")
 
 print(f"Optimizer created at {time() - start_time} seconds")
 actual_resample_interval = 1

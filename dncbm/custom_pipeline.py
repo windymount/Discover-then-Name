@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 from urllib.parse import quote_plus
 
 from jaxtyping import Int64
@@ -435,9 +435,31 @@ class Pipeline:
 
 
 class PipelineWithAlignment(Pipeline):
-    def __init__(self, align_lambda, embd_dictionary, align_loss_type: AlignmentLossType = AlignmentLossType.maha_encoder, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(
+        self,
+        align_lambda: float,
+        align_loss_type: AlignmentLossType,
+        embd_dictionary: torch.Tensor,
+        activation_resampler: Optional[AbstractActivationResampler],
+        autoencoder: SparseAutoencoder,
+        checkpoint_directory: Path,
+        loss: AbstractLoss,
+        optimizer: AbstractOptimizerWithReset,
+        device: torch.device,
+        args,
+        max_epoch: int = 200,
+    ):
+        super().__init__(
+            activation_resampler=activation_resampler,
+            autoencoder=autoencoder,
+            checkpoint_directory=checkpoint_directory,
+            loss=loss,
+            optimizer=optimizer,
+            device=device,
+            args=args,
+        )
         self.align_lambda = align_lambda
+        self.align_loss_type = align_loss_type
         self.embd_dictionary = embd_dictionary
         self.clip_embd = None
         # Choose alignment loss based on type
@@ -454,9 +476,9 @@ class PipelineWithAlignment(Pipeline):
         elif align_loss_type == AlignmentLossType.softmax_sim_decoder:
             self.alignment_loss = SoftMaxSimLossOnDecoder(embd_dictionary)
         elif align_loss_type == AlignmentLossType.rand_max_sim_encoder:
-            self.alignment_loss = RandMaxSimLossOnEncoder(embd_dictionary, temperature=self.args.randmax_init_T)
+            self.alignment_loss = RandMaxSimLossOnEncoder(embd_dictionary, temperature=self.args.randmax_init_T, max_epoch=max_epoch)
         elif align_loss_type == AlignmentLossType.rand_max_sim_decoder:
-            self.alignment_loss = RandMaxSimLossOnDecoder(embd_dictionary, temperature=self.args.randmax_init_T)
+            self.alignment_loss = RandMaxSimLossOnDecoder(embd_dictionary, temperature=self.args.randmax_init_T, max_epoch=max_epoch)
         else:
             raise ValueError(f"Unknown alignment loss type: {align_loss_type}")
 
@@ -660,10 +682,6 @@ class PipelineWithAlignment(Pipeline):
                 wandb.log(
                     sim_logs, step=self.total_activations_trained_on, commit=True,)
                 return loss_metrics, mean_losses
-    def run_pipeline(self, train_batch_size: NonNegativeInt, val_frequency: NonNegativeInt | None = None, checkpoint_frequency: NonNegativeInt | None = None, num_epochs=None, train_fnames=None, train_val_fnames=None, start_time=0, resample_epoch_freq: NonNegativeInt = 0) -> None:
-        if isinstance(self.alignment_loss, RandMaxSimLoss):
-            self.alignment_loss.max_epoch = num_epochs
-        return super().run_pipeline(train_batch_size, val_frequency, checkpoint_frequency, num_epochs, train_fnames, train_val_fnames, start_time, resample_epoch_freq)
     
 
 class MahalanobisAlignmentLoss():
@@ -741,11 +759,15 @@ class RandMaxSimLoss():
     def forward(self, weights):
         weights = weights / weights.norm(dim=1, keepdim=True)
         cos_sim = torch.matmul(weights, self.embd_dictionary.T)
-        select_probs = torch.softmax(cos_sim / self.temperature + self.current_epoch / self.max_epoch, dim=1)
-        # Sample indices according to select_probs for each row
-        sampled_indices = torch.multinomial(select_probs, num_samples=1).squeeze()
-        sampled_cos_sim = cos_sim[torch.arange(cos_sim.shape[0]), sampled_indices]
-        return -sampled_cos_sim.mean()
+        if self.current_epoch < self.max_epoch:
+            # Sample indices according to select_probs for each row
+            temp_cur = self.temperature * (1 - (self.current_epoch / self.max_epoch))
+            select_probs = torch.softmax(cos_sim / temp_cur, dim=1)
+            sampled_indices = torch.multinomial(select_probs, num_samples=1).squeeze()
+            sampled_cos_sim = cos_sim[torch.arange(cos_sim.shape[0]), sampled_indices]
+            return -sampled_cos_sim.mean()
+        else:
+            return -cos_sim.max(dim=1).values.mean()
 
 
 class RandMaxSimLossOnDecoder(RandMaxSimLoss):
