@@ -16,7 +16,9 @@ def get_common_parser():
     parser.add_argument("--sae_dataset", type=str, default="cc3m")
 
     parser.add_argument("--img_enc_name", type=str, default='clip_RN50',
-                        help='Name of the clip image encoder', choices=["clip_RN50", "clip_ViT-B/16", "clip_ViT-L/14"])
+                        help='Name of the clip image encoder', choices=["clip_RN50", "clip_ViT-B/16",
+                                                                        "clip_ViT-L/14", "siglip-so400m-patch14-384",
+                                                                        "siglip-so400m-patch14-224"])
     parser.add_argument('--hook_points', nargs='*',
                         help='Name of the model hook points to get the activations from', default=['out'])
 
@@ -70,8 +72,11 @@ def get_common_parser():
                         choices=['maha_encoder', 'maha_decoder', 
                                 'max_cos_sim_encoder', 'max_cos_sim_decoder',
                                 'softmax_sim_encoder', 'softmax_sim_decoder',
-                                'rand_max_sim_encoder', 'rand_max_sim_decoder'],
+                                'rand_max_sim_encoder', 'rand_max_sim_decoder',
+                                'cos_cubed_act'],
                         help='Type of alignment loss to use')
+    parser.add_argument('--concept_activation_fname', type=str, default=None,
+                        help='Path to the concept activation file')
     parser.add_argument('--resample_aligned_neuron', action='store_true', default=False,
                        help='Use embedding-aligned neuron resampling')
     parser.add_argument('--max_n_resamples', type=int, default=0,
@@ -89,4 +94,6 @@ def get_common_parser():
                         help="temperature for randmax sim loss")
     parser.add_argument("--randmax_max_epoch", type=int, default=None,
                         help="max epoch for randmax sim loss temperature annealing. If None, uses num_epochs")
+    parser.add_argument("--checkpoint", type=str, default=None, help="Path to checkpoint to resume training from")
+
     return parser

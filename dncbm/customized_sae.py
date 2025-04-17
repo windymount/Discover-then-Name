@@ -93,8 +93,8 @@ class TopKSparseAutoencoder(SparseAutoencoder):
         learned_activations.scatter_(-1, topk_indices, values)
         x = self.decoder(learned_activations)
         decoded_activations = self.post_decoder_bias(x)
-        aux_loss = self.aux_loss(x, pre_activations, learned_activations, decoded_activations) * self.aux_loss_weight / self.mse_scale
         if return_aux_loss:
+            aux_loss = self.aux_loss(x, pre_activations, learned_activations, decoded_activations) * self.aux_loss_weight / self.mse_scale
             return AutoencoderForwardPassResult(learned_activations, decoded_activations), aux_loss
         else:
             return AutoencoderForwardPassResult(learned_activations, decoded_activations)

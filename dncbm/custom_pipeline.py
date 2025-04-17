@@ -1,3 +1,4 @@
+import math
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 from urllib.parse import quote_plus
@@ -45,7 +46,7 @@ class AlignmentLossType(Enum):
     softmax_sim_decoder = "softmax_sim_decoder"
     rand_max_sim_encoder = "rand_max_sim_encoder"
     rand_max_sim_decoder = "rand_max_sim_decoder"
-
+    cos_cubed_act = "cos_cubed_act"
 
 class Pipeline:
     """Pipeline for training a Sparse Autoencoder on TransformerLens activations.
@@ -285,6 +286,7 @@ class Pipeline:
         train_val_fnames=None,
         start_time=0,
         resample_epoch_freq: NonNegativeInt = 0,
+        concept_activation_fname=None
     ) -> None:
 
         last_validated: int = 0
@@ -327,9 +329,13 @@ class Pipeline:
                 last_checkpoint += n_activation_vectors_in_store
 
                 # Train
+                if concept_activation_fname is not None:
+                    concept_activation_store = torch.load(concept_activation_fname)
+                else:
+                    concept_activation_store = None
                 progress_bar.set_postfix({"stage": "train"})
                 batch_neuron_activity: Int64[Tensor, Axis.LEARNT_FEATURE] = self.train_autoencoder(
-                    train_activation_store, train_batch_size=train_batch_size
+                    train_activation_store, train_batch_size=train_batch_size, concept_activation_store=concept_activation_store
                 )
 
                 print(f"Training completed at {time() - start_time} seconds")
@@ -479,12 +485,14 @@ class PipelineWithAlignment(Pipeline):
             self.alignment_loss = RandMaxSimLossOnEncoder(embd_dictionary, temperature=self.args.randmax_init_T, max_epoch=max_epoch)
         elif align_loss_type == AlignmentLossType.rand_max_sim_decoder:
             self.alignment_loss = RandMaxSimLossOnDecoder(embd_dictionary, temperature=self.args.randmax_init_T, max_epoch=max_epoch)
+        elif align_loss_type == AlignmentLossType.cos_cubed_act:
+            self.alignment_loss = CosCubedAlignmentLoss()
         else:
             raise ValueError(f"Unknown alignment loss type: {align_loss_type}")
 
     @validate_call(config={"arbitrary_types_allowed": True})
     def train_autoencoder(
-        self, activation_store: TensorActivationStore, train_batch_size: PositiveInt
+        self, activation_store: TensorActivationStore, train_batch_size: PositiveInt, concept_activation_store = None
     ) -> Int64[Tensor, Axis.names(Axis.COMPONENT, Axis.LEARNT_FEATURE)]:
         """Train the sparse autoencoder.
 
@@ -501,6 +509,16 @@ class PipelineWithAlignment(Pipeline):
             batch_size=train_batch_size,
             shuffle=True
         )
+        print(f"Activation store shape: {len(activation_store)}")
+        print(f"Concept activation store shape: {concept_activation_store.shape}")
+        if concept_activation_store is not None:
+            # Create a dataset that combines both activation stores
+            combined_dataset = torch.utils.data.TensorDataset(activation_store._data[:len(activation_store)], concept_activation_store)
+            activations_dataloader = DataLoader(
+                combined_dataset,
+                batch_size=train_batch_size,
+                shuffle=True
+            )
 
         learned_activations_fired_count: Int64[
             Tensor, Axis.names(Axis.COMPONENT, Axis.LEARNT_FEATURE)
@@ -512,9 +530,12 @@ class PipelineWithAlignment(Pipeline):
         for id, store_batch in enumerate(activations_dataloader):
             # Zero the gradients
             self.optimizer.zero_grad()
+            if concept_activation_store is not None:
+                batch = store_batch[0].detach().to(self.device)
+                concept_batch = store_batch[1].detach().to(self.device)
+            else:
+                batch = store_batch.detach().to(self.device)
 
-            # Move the batch to the device (in place)
-            batch = store_batch.detach().to(self.device)
 
             # Forward pass
             (learned_activations, reconstructed_activations), aux_loss = self.autoencoder.forward(
@@ -544,7 +565,9 @@ class PipelineWithAlignment(Pipeline):
                 fired = learned_activations > 0
                 learned_activations_fired_count.add_(fired.sum(dim=0))
             # Calculate alignment loss
-            alignment_loss = self.alignment_loss.forward(self.autoencoder)
+            alignment_loss = self.alignment_loss.forward(self.autoencoder,
+                                                         intermediate_activations=learned_activations,
+                                                         concept_activations=concept_batch if concept_activation_store is not None else None)
             total_loss += self.align_lambda * alignment_loss
             
             # Log alignment loss metric
@@ -690,7 +713,7 @@ class MahalanobisAlignmentLoss():
         self.sigma_inv = torch.inverse(torch.cov(embd_dictionary.T) + 1e-6 * torch.eye(embd_dictionary.shape[1]).to(embd_dictionary.device))
         self.mu = torch.mean(embd_dictionary, dim=0)
 
-    def forward(self, weights):
+    def forward(self, weights, **kwargs):
         weights = weights / weights.norm(dim=1, keepdim=True)
         weights = weights - self.mu.unsqueeze(0)
         return torch.diag(weights @ self.sigma_inv @ weights.T).mean()
@@ -711,7 +734,7 @@ class MaxCosSimLoss():
         self.embd_dictionary = embd_dictionary
         self.embd_dictionary = self.embd_dictionary / self.embd_dictionary.norm(dim=1, keepdim=True)
 
-    def forward(self, weights):
+    def forward(self, weights, **kwargs):
         weights = weights / weights.norm(dim=1, keepdim=True)
         cos_sim = torch.matmul(weights, self.embd_dictionary.T)
         return -cos_sim.max(dim=1).values.mean()
@@ -732,7 +755,7 @@ class SoftMaxSimLoss():
         self.embd_dictionary = embd_dictionary
         self.embd_dictionary = self.embd_dictionary / self.embd_dictionary.norm(dim=1, keepdim=True)
 
-    def forward(self, weights):
+    def forward(self, weights, **kwargs):
         weights = weights / weights.norm(dim=1, keepdim=True)
         cos_sim = torch.matmul(weights, self.embd_dictionary.T)
         return -torch.logsumexp(cos_sim, dim=1).mean()
@@ -756,7 +779,7 @@ class RandMaxSimLoss():
         self.max_epoch = max_epoch
         self.current_epoch = 0
 
-    def forward(self, weights):
+    def forward(self, weights, **kwargs):
         weights = weights / weights.norm(dim=1, keepdim=True)
         cos_sim = torch.matmul(weights, self.embd_dictionary.T)
         if self.current_epoch < self.max_epoch:
@@ -778,6 +801,57 @@ class RandMaxSimLossOnDecoder(RandMaxSimLoss):
 class RandMaxSimLossOnEncoder(RandMaxSimLoss):
     def forward(self, sae):
         return super().forward(sae.encoder.weight.squeeze(0))
+
+
+def cos_similarity_cubed(clip_feats, target_feats, device='cuda', batch_size=10000, min_norm=1e-3):
+    """
+    Substract mean from each vector, then raises to third power and compares cos similarity
+    Does not modify any tensors in place
+    """
+    with torch.no_grad():
+        torch.cuda.empty_cache()
+        
+        target_feats = target_feats.float()
+        clip_feats = clip_feats - torch.mean(clip_feats, dim=0, keepdim=True)
+        target_feats = target_feats - torch.mean(target_feats, dim=0, keepdim=True)
+        
+        clip_feats = clip_feats**3
+        target_feats = target_feats**3
+        
+        clip_feats = clip_feats/torch.clip(torch.norm(clip_feats, p=2, dim=0, keepdim=True), min_norm)
+        target_feats = target_feats/torch.clip(torch.norm(target_feats, p=2, dim=0, keepdim=True), min_norm)
+        similarities = []
+        for t_i in range(math.ceil(target_feats.shape[1]/batch_size)):
+            curr_similarities = []
+            curr_target = target_feats[:, t_i*batch_size:(t_i+1)*batch_size].to(device).T
+            for c_i in range(math.ceil(clip_feats.shape[1]/batch_size)):
+                curr_similarities.append(curr_target.float() @ clip_feats[:, c_i*batch_size:(c_i+1)*batch_size].to(device).float())
+            similarities.append(torch.cat(curr_similarities, dim=1))
+    return torch.cat(similarities, dim=0)
+
+
+class CosCubedAlignmentLoss():
+    def forward(
+        self,
+        autoencoder,
+        intermediate_activations,
+        concept_activations
+    ):
+        """Calculate the CosCubed loss.
+
+        Args:
+            source_activations: Source activations (input activations to the autoencoder from the
+                source model).
+            learned_activations: Learned activations (intermediate activations in the autoencoder).
+            decoded_activations: Decoded activations.
+
+        Returns:
+            Loss per batch item.
+        """
+        nonzero_mask = (intermediate_activations.sum(dim=0) > 0)
+        cos_cubed_loss = cos_similarity_cubed(concept_activations, intermediate_activations[:, nonzero_mask])
+        cos_cubed_loss = -cos_cubed_loss.max(dim=-1).values
+        return cos_cubed_loss.mean(dim=-1)
 
 
 class EmbeddingAlignedResampler(ActivationResampler):

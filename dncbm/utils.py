@@ -26,6 +26,10 @@ def get_img_model(args):
     if args.img_enc_name.startswith('clip'):
         model, preprocess = clip.load(
             args.img_enc_name[5:], device=args.device)
+    elif args.img_enc_name.startswith('siglip'):
+        from transformers import AutoProcessor, AutoModel
+        model = AutoModel.from_pretrained(f"google/{args.img_enc_name}")
+        preprocess = AutoProcessor.from_pretrained(f"google/{args.img_enc_name}")
     elif args.img_enc_name.startswith("resnet50"):
         model = torchvision.models.resnet50(
             weights=torchvision.models.ResNet50_Weights.IMAGENET1K_V1)
@@ -40,8 +44,11 @@ def get_sae_ckpt(args, autoencoder):
     """
     Loads the SAE checkpoint given configuration in args
     """
-    save_dir_ckpt = args.save_dir_sae_ckpts[args.modality]
-    ckpt_path = osp.join(save_dir_ckpt, f'sparse_autoencoder_final.pt')
+    if hasattr(args, 'checkpoint'):
+        ckpt_path = args.checkpoint
+    else:
+        save_dir_ckpt = args.save_dir_sae_ckpts[args.modality]
+        ckpt_path = osp.join(save_dir_ckpt, f'sparse_autoencoder_final.pt')
     print(f"Loading SAE checkpoint from: {ckpt_path}")
     state_dict = torch.load(ckpt_path)
     autoencoder.load_state_dict(state_dict)
