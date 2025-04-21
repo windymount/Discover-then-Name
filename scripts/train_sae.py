@@ -14,18 +14,15 @@ from sparse_autoencoder import (
     L2ReconstructionLoss,
     LearnedActivationsL1Loss,
     LossReducer,
-    SparseAutoencoder,
 )
 import wandb
 from time import time
 
 from dncbm.arg_parser import get_common_parser
 from dncbm.utils import common_init
-from typing import Optional
 
 
 parser = get_common_parser()
-parser.add_argument("--checkpoint", type=str, default=None, help="Path to checkpoint to resume training from")
 args = parser.parse_args()
 common_init(args)
 start_time = time()
@@ -57,7 +54,6 @@ elif args.sae_type == "TopKSAE":
 else:
     raise ValueError(f"Unknown SAE type: {args.sae_type}")
 
-# Pass max_epoch to pipeline for RandMaxSimLoss
 max_epoch = args.randmax_max_epoch if args.randmax_max_epoch is not None else args.num_epochs
 
 print(f"Autoencoder ({args.sae_type}) created at {time() - start_time} seconds")
@@ -194,10 +190,10 @@ print(f"Getting fnames from {args.data_dir_activations[args.modality]}")
 train_fnames = []
 train_val_fnames = []
 for fname in fnames:
-    if fname.startswith(f"train_val"):
+    if fname == "train_val":
         train_val_fnames.append(os.path.join(
             os.path.abspath(args.data_dir_activations[args.modality]), fname))
-    elif fname.startswith(f"train"):
+    elif fname == "train":
         train_fnames.append(os.path.join(
             os.path.abspath(args.data_dir_activations[args.modality]), fname))
 if args.val_freq == 0:
@@ -216,6 +212,7 @@ pipeline.run_pipeline(
     train_val_fnames=train_val_fnames,
     start_time=start_time,
     resample_epoch_freq=args.resample_freq,
+    concept_activation_fname=args.concept_activation_fname
 )
 
 print(f"-------total time taken------ {np.round(time()-start_time,3)}")

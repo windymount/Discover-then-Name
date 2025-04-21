@@ -244,10 +244,12 @@ class Pipeline:
 
     def get_activation_store(self, activation_fname):
         activations = torch.load(activation_fname)
+        indices = torch.load(activation_fname + "_indices.pt")
         activation_store = TensorActivationStore(
             activations.shape[0], self.autoencoder.n_input_features, self.n_components)
         activation_store.empty()
         activation_store.extend(activations, component_idx=0)
+        activation_store.indices = indices
         return activation_store
 
     # considering train_val_fnames to contain a single fname
@@ -331,6 +333,7 @@ class Pipeline:
                 # Train
                 if concept_activation_fname is not None:
                     concept_activation_store = torch.load(concept_activation_fname)
+                    concept_activation_store.indices = torch.load(concept_activation_fname + "_indices.pt")
                 else:
                     concept_activation_store = None
                 progress_bar.set_postfix({"stage": "train"})
@@ -512,13 +515,42 @@ class PipelineWithAlignment(Pipeline):
         print(f"Activation store shape: {len(activation_store)}")
         print(f"Concept activation store shape: {concept_activation_store.shape}")
         if concept_activation_store is not None:
-            # Create a dataset that combines both activation stores
-            combined_dataset = torch.utils.data.TensorDataset(activation_store._data[:len(activation_store)], concept_activation_store)
+            # Create sets of indices for faster lookup
+            activation_indices = set(activation_store.indices)
+            concept_indices = set(concept_activation_store.indices)
+            
+            # Get common indices using set intersection
+            common_indices_set = activation_indices & concept_indices
+            
+            # Create position mappings for both stores
+            activation_idx_to_pos = {idx: i for i, idx in enumerate(activation_store.indices)}
+            concept_idx_to_pos = {idx: i for i, idx in enumerate(concept_activation_store.indices)}
+            
+            # Get positions in both stores for common indices
+            common_positions = [(activation_idx_to_pos[idx], concept_idx_to_pos[idx]) 
+                               for idx in common_indices_set]
+            
+            # Unzip positions into separate lists
+            activation_positions, concept_positions = zip(*common_positions)
+            
+            # Convert to tensors
+            activation_positions = torch.tensor(activation_positions)
+            concept_positions = torch.tensor(concept_positions)
+            
+            print(f"common_indices_num: {len(common_indices_set)}")
+            
+            # Filter the activation store and concept activation store using the positions
+            activation_store_data = activation_store._data[:len(activation_store)][activation_positions]
+            concept_activation_store = concept_activation_store[concept_positions]
+            print(f"activation_store_data shape: {activation_store_data.shape}")
+            combined_dataset = torch.utils.data.TensorDataset(activation_store_data, concept_activation_store)
             activations_dataloader = DataLoader(
                 combined_dataset,
                 batch_size=train_batch_size,
-                shuffle=True
+                shuffle=True,
+                num_workers=16
             )
+            print("Finished creating dataloader")
 
         learned_activations_fired_count: Int64[
             Tensor, Axis.names(Axis.COMPONENT, Axis.LEARNT_FEATURE)
@@ -854,6 +886,28 @@ class CosCubedAlignmentLoss():
         return cos_cubed_loss.mean(dim=-1)
 
 
+def beam_search_concept(activations, concept_activations, beam_size: int = 10):
+    """
+    Perform beam search on the activations to find the most similar concept activations.
+    params:
+        activations: torch.Tensor, shape (n_samples, n_features)
+        concept_activations: torch.Tensor, shape (n_samples, n_concepts)
+        beam_size: int, number of most similar concepts to return
+    returns:
+        cos_sim: torch.Tensor, shape (n_features,)
+    """
+    activations = activations / activations.norm(dim=0, keepdim=True)
+    neg_concepts = 1 - concept_activations
+    all_concepts = torch.cat((concept_activations, neg_concepts), dim=1)
+    normed_concepts = all_concepts / all_concepts.norm(dim=0, keepdim=True)
+    cos_sim = torch.matmul(activations.T, normed_concepts)
+    topk_values, topk_indices = cos_sim.topk(beam_size, dim=-1)
+    # Perform 1 time of beam search
+    for candidate_idx in topk_indices:
+        candidate_act = all_concepts[candidate_idx]
+        cos_sim = torch.matmul(activations.T, candidates)
+        topk_values, topk_indices = cos_sim.topk(beam_size, dim=-1)
+    return topk_values, topk_indices
 class EmbeddingAlignedResampler(ActivationResampler):
     """Activation resampler that considers embedding alignment."""
     
