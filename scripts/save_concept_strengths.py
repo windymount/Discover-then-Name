@@ -7,6 +7,7 @@ from sparse_autoencoder import SparseAutoencoder
 from tqdm import tqdm
 import os.path as osp
 
+from dncbm.customized_sae import TopKSparseAutoencoder
 from dncbm.utils import common_init, get_sae_ckpt
 
 
@@ -24,7 +25,11 @@ def save_concept_strengths(args, is_cc3m=False):
 
     autoencoder_input_dim = args.autoencoder_input_dim_dict[args.ae_input_dim_dict_key[args.modality]]
     n_learned_features = int(autoencoder_input_dim * args.expansion_factor)
-    autoencoder = SparseAutoencoder(n_input_features=autoencoder_input_dim, n_learned_features=n_learned_features, n_components=len(args.hook_points)).to(args.device)
+    if args.sae_type == "TopKSAE":
+        autoencoder = TopKSparseAutoencoder(n_input_features=autoencoder_input_dim, n_learned_features=n_learned_features, n_components=len(args.hook_points),
+                                            k=args.topk_k, aux_k=args.topk_aux_k).to(args.device)
+    else:
+        autoencoder = SparseAutoencoder(n_input_features=autoencoder_input_dim, n_learned_features=n_learned_features, n_components=len(args.hook_points)).to(args.device)
 
     autoencoder = get_sae_ckpt(args, autoencoder)
     all_concepts = []
